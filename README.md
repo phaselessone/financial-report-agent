@@ -107,26 +107,7 @@ bash scripts/ragctl.sh answer-eval-full-raw
 
 Do not merge these two result sets when reporting metrics.
 
-## Evaluation
 
-This project uses separate benchmark profiles. They are not interchangeable:
-
-| Profile | Query count | Answer Hit Rate | Citation Doc Hit Rate | Citation Span Hit Rate | Support Hit Rate |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| `current-dev` | 16 | 0.7500 | 0.6250 | 0.5000 | 1.0000 |
-| `historical-full-core` | 40 | 0.6857 | 0.8286 | 0.4000 | 0.9143 |
-| `historical-full-raw` | 50 | 0.5778 | 0.6444 | 0.3111 | 0.9333 |
-
-Retrieval evaluation on the 48-query profile reported:
-
-| Method | Query count | Recall@5 | Recall@10 | MRR@10 |
-| --- | ---: | ---: | ---: | ---: |
-| Dense | 48 | 0.5417 | 0.6458 | 0.3763 |
-| BM25 | 48 | 0.5000 | 0.5833 | 0.3666 |
-| Hybrid | 48 | 0.5417 | 0.7083 | 0.4000 |
-| Hybrid+Rerank | 48 | 0.6667 | 0.6667 | 0.6038 |
-
-Observed latency bottleneck is generation rather than retrieval. For historical full runs, generation latency dominated end-to-end latency, while retrieval and reranking were comparatively small.
 
 ## Remote And Artifact Notes
 
