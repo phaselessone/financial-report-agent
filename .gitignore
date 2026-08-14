@@ -23,3 +23,8 @@ remote_sync_*/
 .sync_backups/
 *.zip
 *.tgz
+
+# editor backup files
+.env.*~
+*.un~
+*~
