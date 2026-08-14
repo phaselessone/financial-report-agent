@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import os
 import time
 from pathlib import Path
 from typing import Any
 
 from src.generation.answerer import LocalEvidenceAnswerer
+
+logger = logging.getLogger(__name__)
 
 
 def _env_or_value(value: str | None, env_name: str, *, required: bool = False) -> str:
@@ -61,7 +64,6 @@ class DeepSeekEvidenceAnswerer(LocalEvidenceAnswerer):
             "stream": False,
         }
         endpoint = f"{self.base_url}/chat/completions"
-        last_error = ""
         for attempt in range(self.max_retries + 1):
             try:
                 with httpx.Client(timeout=self.timeout_seconds) as client:
@@ -73,22 +75,53 @@ class DeepSeekEvidenceAnswerer(LocalEvidenceAnswerer):
                         },
                         json=payload,
                     )
-                if response.status_code == 429 or response.status_code >= 500:
-                    last_error = response.text
+                status_code = response.status_code
+                if 400 <= status_code < 500 and status_code != 429:
+                    logger.warning(
+                        "DeepSeek API rejected the request with status %s (attempt %d); not retrying",
+                        status_code,
+                        attempt + 1,
+                    )
+                    raise RuntimeError(
+                        f"DeepSeek API rejected the request with status {status_code}: {response.text[:200]}"
+                    )
+                if status_code == 429 or status_code >= 500:
                     if attempt < self.max_retries:
+                        logger.warning(
+                            "DeepSeek API returned status %s (attempt %d/%d); retrying",
+                            status_code,
+                            attempt + 1,
+                            self.max_retries,
+                        )
                         time.sleep(min(2**attempt, 8))
                         continue
+                    logger.warning(
+                        "DeepSeek API returned status %s after %d retries; giving up",
+                        status_code,
+                        self.max_retries,
+                    )
                     return ""
                 response.raise_for_status()
                 data = response.json()
                 return str(data["choices"][0]["message"]["content"]).strip()
+            except RuntimeError:
+                raise
             except Exception as exc:
-                last_error = str(exc)
                 if attempt < self.max_retries:
+                    logger.warning(
+                        "DeepSeek API request failed on attempt %d/%d: %s; retrying",
+                        attempt + 1,
+                        self.max_retries,
+                        exc,
+                    )
                     time.sleep(min(2**attempt, 8))
                     continue
+                logger.warning(
+                    "DeepSeek API request failed after %d retries: %s",
+                    self.max_retries,
+                    exc,
+                )
                 return ""
-        return last_error
 
 
 def build_generation_answerer(
