@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -47,6 +47,7 @@ def materialize_eval_set(
             continue
 
         gold_chunks: list[dict[str, Any]] = []
+        gold_unresolved_keys: list[str] = []
         for target_doc in target_docs:
             candidates = chunks_by_doc_id.get(target_doc["doc_id"], [])
             page_hints = set(int(page) for page in row.get("page_hints", []))
@@ -73,10 +74,23 @@ def materialize_eval_set(
                     score += 0.2
                 scored.append((score, int(candidate["page_start"]), candidate))
             scored.sort(key=lambda item: (-item[0], item[1]))
-            if scored:
+            if scored and scored[0][0] > 0:
                 gold_chunks.append(scored[0][2])
-            elif candidates:
-                gold_chunks.append(candidates[0])
+            else:
+                gold_unresolved_keys.append(target_doc["doc_key"])
+
+        if gold_unresolved_keys:
+            missing_rows.append(
+                {
+                    "question_id": question_id,
+                    "industry": row.get("industry", "other"),
+                    "question_type": row.get("question_type", "fact"),
+                    "intent": row.get("intent", row.get("question_type", "fact")),
+                    "query": row["query"],
+                    "missing_doc_keys": gold_unresolved_keys,
+                }
+            )
+            continue
 
         gold_doc_ids = sorted({chunk["doc_id"] for chunk in gold_chunks})
         gold_page_nums = sorted({page for chunk in gold_chunks for page in range(int(chunk["page_start"]), int(chunk["page_end"]) + 1)})

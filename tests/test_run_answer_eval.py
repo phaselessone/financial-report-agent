@@ -1,10 +1,10 @@
-﻿import argparse
+import argparse
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 try:
-    import fitz  # noqa: F401
+    import pymupdf  # noqa: F401
 except ModuleNotFoundError:
     HAS_FITZ = False
     resolve_answer_seed_paths = None

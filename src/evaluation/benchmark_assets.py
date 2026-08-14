@@ -7,7 +7,18 @@ import re
 from typing import Any
 
 from src.utils.io import write_jsonl
-from src.utils.text_utils import extract_numeric_tokens, extract_terms, first_sentence, guess_industry, normalize_for_match, normalize_text, strip_file_extension
+from src.utils.text_utils import (
+    extract_numeric_tokens,
+    extract_terms,
+    first_sentence,
+    guess_industry,
+    industry_from_file_name,
+    normalize_for_match,
+    normalize_text,
+    short_title_from_file_name,
+    strip_file_extension,
+    topic_hint_from_title,
+)
 
 INDUSTRY_PREFIX_TO_KEY = {
     "\u534a\u5bfc\u4f53": "semiconductor",
@@ -23,14 +34,6 @@ INDUSTRY_LABELS = {
     "liquor": "\u767d\u9152",
 }
 
-NEW_FILE_NAME_RE = re.compile(r"^(?P<prefix>[^_]+)_(?P<date>\d{4}-\d{2}-\d{2})_(?P<ref>[A-Za-z0-9]+)_(?P<title>.+)$")
-TITLE_DATE_SUFFIX_RE = re.compile(r"(?:[-_ ]?(?:20\d{2}[-/]?\d{2}[-/]?\d{2}|\d{6,8}|\u7b2c?\d+\u7248(?:\(\u82f1\u8bd1\u4e2d\))?))+$")
-TITLE_NOISE_PATTERNS = (
-    "\u7814\u7a76\u62a5\u544a\u6b63\u6587 _ \u6570\u636e\u4e2d\u5fc3 _ \u4e1c\u65b9\u8d22\u5bcc\u7f51",
-    "\u7814\u7a76\u62a5\u544a\u6b63\u6587 _ \u6570\u636e\u4e2d\u5fc3",
-    "\u6570\u636e\u4e2d\u5fc3 _ \u4e1c\u65b9\u8d22\u5bcc\u7f51",
-    "\u6570\u636e\u4e2d\u5fc3",
-)
 ANSWER_NOISE_PATTERNS = (
     "\u7ae0\u8282\u8def\u5f84",
     "\u8868\u683c\u884c\u7ec4",
@@ -42,37 +45,6 @@ ANSWER_NOISE_PATTERNS = (
 )
 
 
-def industry_from_file_name(file_name: str) -> str:
-    return guess_industry(file_name)
-
-
-
-def short_title_from_file_name(file_name: str) -> str:
-    stem = strip_file_extension(Path(file_name).name)
-    match = NEW_FILE_NAME_RE.match(stem)
-    if match:
-        title = match.group("title").strip()
-    elif "\uff1a" in stem:
-        title = stem.split("\uff1a", 1)[1].strip()
-    elif ":" in stem:
-        title = stem.split(":", 1)[1].strip()
-    else:
-        parts = [part for part in stem.split("-") if part]
-        if len(parts) >= 3:
-            title = "-".join(parts[1:-1]).strip()
-        elif len(parts) >= 2:
-            title = "-".join(parts[1:]).strip()
-        else:
-            title = stem.strip()
-
-    normalized = normalize_text(title)
-    for pattern in TITLE_NOISE_PATTERNS:
-        normalized = normalized.replace(pattern, "").strip(" -_:\uff1a,\uff0c")
-    normalized = TITLE_DATE_SUFFIX_RE.sub("", normalized).strip(" -_:\uff1a,\uff0c")
-    return normalized or stem.strip()
-
-
-
 def make_doc_key(file_name: str, duplicate_count: int = 1) -> str:
     title = short_title_from_file_name(file_name)
     base = normalize_for_match(title) or normalize_for_match(strip_file_extension(Path(file_name).name)) or "doc"
@@ -80,28 +52,6 @@ def make_doc_key(file_name: str, duplicate_count: int = 1) -> str:
         return base
     digest = sha1(file_name.encode("utf-8")).hexdigest()[:8]
     return f"{base}-{digest}"
-
-
-
-def topic_hint_from_title(title: str) -> str:
-    normalized = normalize_text(title)
-    if not normalized:
-        return ""
-    for separator in ("\uff1a", ":", "\u2014\u2014", "-", "\uff0c", ","):
-        if separator in normalized:
-            suffix = normalized.split(separator, 1)[1].strip()
-            suffix = TITLE_DATE_SUFFIX_RE.sub("", suffix).strip(" -_:\uff1a,\uff0c")
-            if (
-                6 <= len(suffix) <= 36
-                and not re.fullmatch(r"(?:20\d{2}[-/]?\d{2}[-/]?\d{2}|\d{6,8}|\u7b2c?\d+\u7248(?:\(\u82f1\u8bd1\u4e2d\))?)", suffix)
-                and not suffix.isdigit()
-            ):
-                return suffix
-    cleaned = TITLE_DATE_SUFFIX_RE.sub("", normalized).strip(" -_:\uff1a,\uff0c")
-    if len(cleaned) > 36:
-        return cleaned[:36].rstrip("\uff0c,\uff1b; ") + "\u2026"
-    return cleaned
-
 
 
 def industry_label(industry: str) -> str:
