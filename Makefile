@@ -1,5 +1,9 @@
-SHELL := /bin/bash
+ifeq ($(OS),Windows_NT)
+PYTHON ?= .venv/Scripts/python.exe
+else
 PYTHON ?= .venv/bin/python
+SHELL := /bin/bash
+endif
 
 .PHONY: doctor test unit integration benchmark prepare-benchmark eval retrieval-eval answer-eval answer-eval-full pipeline deepseek-smoke
 

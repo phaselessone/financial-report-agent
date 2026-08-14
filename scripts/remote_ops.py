@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import os
+import sys
 from pathlib import Path
 from stat import S_ISDIR
 from typing import Iterable
@@ -23,6 +24,12 @@ def _configure_host_keys(client: paramiko.SSHClient) -> None:
     if known_hosts_path:
         client.load_host_keys(str(Path(known_hosts_path)))
     if os.environ.get("REMOTE_ALLOW_INSECURE_HOSTKEY", "").lower() in {"1", "true", "yes"}:
+        print(
+            "[security warning] REMOTE_ALLOW_INSECURE_HOSTKEY is enabled: "
+            "unknown host keys will be auto-accepted, which exposes the connection "
+            "to man-in-the-middle (MITM) attacks. Use only in a controlled environment.",
+            file=sys.stderr,
+        )
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         return
     client.set_missing_host_key_policy(paramiko.RejectPolicy())
@@ -88,18 +95,25 @@ def _read_remote_file(sftp: paramiko.SFTPClient, remote_path: str) -> str:
 
 
 def install_key(pubkey_path: Path) -> int:
+    if os.environ.get("REMOTE_ALLOW_PASSWORD_AUTH", "").lower() not in {"1", "true", "yes"}:
+        raise SystemExit(
+            "Password auth is disabled for key installation. "
+            "Set REMOTE_ALLOW_PASSWORD_AUTH=1 explicitly to allow the one-off bootstrap."
+        )
+    home_dir = (os.environ.get("REMOTE_HOME_DIR") or "/root").rstrip("/")
+    ssh_dir = f"{home_dir}/.ssh"
     client = _connect("password")
     try:
         with client.open_sftp() as sftp:
-            _mkdir_p(sftp, "/root/.ssh")
-            authorized_keys = "/root/.ssh/authorized_keys"
+            _mkdir_p(sftp, ssh_dir)
+            authorized_keys = f"{ssh_dir}/authorized_keys"
             key_text = pubkey_path.read_text(encoding="utf-8").strip()
             existing = _read_remote_file(sftp, authorized_keys) if _remote_exists(sftp, authorized_keys) else ""
             if key_text not in existing:
                 combined = (existing.rstrip() + "\n" + key_text + "\n") if existing.strip() else key_text + "\n"
                 with sftp.open(authorized_keys, "w") as handle:
                     handle.write(combined)
-        exit_code = _exec_command(client, "chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys")
+        exit_code = _exec_command(client, f"chmod 700 {ssh_dir} && chmod 600 {ssh_dir}/authorized_keys")
         return exit_code
     finally:
         client.close()

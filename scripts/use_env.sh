@@ -14,6 +14,7 @@ load_env_file() {
 }
 
 # Lowest priority first, highest priority last.
+load_env_file "$ROOT_DIR/.env"
 load_env_file "$ROOT_DIR/.env.deepseek"
 load_env_file "$ROOT_DIR/.env.local"
 load_env_file "$ROOT_DIR/.env.runtime"

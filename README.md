@@ -64,18 +64,26 @@ Large local data and generated artifacts are intentionally excluded from GitHub:
 
 ### 1. Create environment
 
+推荐使用 [uv](https://docs.astral.sh/uv/) 创建环境并安装依赖。Runtime dependencies live in `requirements.txt`; `pytest` is only in `requirements-dev.txt`.
+
+macOS / Linux:
+
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+uv venv .venv
+uv pip install --python .venv/bin/python -r requirements.txt -r requirements-dev.txt
 ```
 
-On Windows PowerShell:
+Windows PowerShell:
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+uv venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-dev.txt
+```
+
+Or install directly with `uv pip`:
+
+```powershell
+uv pip install --python .venv\Scripts\python.exe -r requirements.txt -r requirements-dev.txt
 ```
 
 ### 2. Configure runtime
@@ -87,6 +95,8 @@ cp .env.example .env.local
 ```
 
 The repository does not include API keys, private SSH keys, PDFs, indexes, models, or generated evaluation outputs.
+
+`.env`, `.env.deepseek`, `.env.local` and `.env.runtime` are loaded automatically (lowest to highest priority, later files override earlier ones) by both `scripts/use_env.sh` and the Python entrypoints via `src/utils/env.py`.
 
 ### 3. Run pipeline
 
@@ -107,13 +117,21 @@ bash scripts/ragctl.sh answer-eval-full-raw
 
 Do not merge these two result sets when reporting metrics.
 
+On Windows, `bash scripts/ragctl.sh ...` requires Git Bash. You can also run the Python entrypoints directly with the venv interpreter, for example:
 
+```powershell
+.\.venv\Scripts\python.exe run_pipeline.py --input-dir pdf --output-dir data
+.\.venv\Scripts\python.exe run_prepare_benchmark.py
+.\.venv\Scripts\python.exe run_retrieval_eval.py
+.\.venv\Scripts\python.exe run_answer_eval.py
+```
 
 ## Remote And Artifact Notes
 
 - Remote execution during project review used `.venv/bin/python -m pytest -q` and passed with `73 passed`.
 - The canonical remote helper is `scripts/remote_ops.py`, but large recursive artifact transfers should prefer a single remote archive plus checksum verification.
 - Evidence packages and generated outputs are intentionally kept out of the public repository boundary.
+- Local test runs with no `data/` present will report 2 full-seed cases as failing, which is expected because the full answer seed material is not shipped with the repository.
 - Local `.env.*`, `.ssh/`, model caches, PDFs, generated indexes, outputs, artifacts, and backup folders must remain untracked.
 
 ## Roadmap

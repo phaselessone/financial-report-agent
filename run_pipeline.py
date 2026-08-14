@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from src.utils.env import load_env_files
+
+load_env_files()
+
 import argparse
 from pathlib import Path
 
