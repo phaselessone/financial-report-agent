@@ -1,7 +1,9 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import os
 import pickle
 from pathlib import Path
 from typing import Any
@@ -11,6 +13,8 @@ from rank_bm25 import BM25Okapi
 
 from src.utils.io import ensure_dir, read_json, write_json
 from src.utils.text_utils import tokenize_for_bm25
+
+logger = logging.getLogger(__name__)
 
 
 def _chunk_ids_hash(chunk_ids: list[str]) -> str:
@@ -69,8 +73,11 @@ class BM25ChunkIndex:
 
     def save(self, output_dir: Path, *, chunks: list[dict[str, Any]]) -> None:
         ensure_dir(output_dir)
-        with (output_dir / "bm25.pkl").open("wb") as handle:
+        pkl_path = output_dir / "bm25.pkl"
+        tmp_path = pkl_path.with_name(pkl_path.name + ".tmp")
+        with tmp_path.open("wb") as handle:
             pickle.dump({"bm25": self.bm25, "tokenized_corpus": self.tokenized_corpus}, handle)
+        os.replace(tmp_path, pkl_path)
         write_json(output_dir / "chunk_ids.json", self.chunk_ids)
         write_json(output_dir / "bm25_metadata.json", _bm25_metadata(chunks, self.tokenized_corpus, self.chunk_ids))
 
@@ -97,8 +104,8 @@ def build_or_load_bm25_index(
             metadata = read_json(metadata_path)
             if _bm25_metadata_matches(metadata, chunks=chunks, chunk_ids=chunk_ids):
                 return BM25ChunkIndex.load(output_dir)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("BM25 index cache invalid or unreadable (%s); rebuilding.", exc)
     bm25_index = BM25ChunkIndex.build(chunks)
     bm25_index.save(output_dir, chunks=chunks)
     return bm25_index

@@ -5,7 +5,7 @@ from pathlib import Path
 from statistics import median
 from typing import Any
 
-import fitz
+import pymupdf as fitz
 
 from src.utils.text_utils import (
     guess_industry,
@@ -22,6 +22,17 @@ TABLE_CAPTION_RE = re.compile(r"^(表|Table)\s*[0-9一二三四五六七八九�
 NUMBERED_H1_RE = re.compile(r"^(?:\d+|[一二三四五六七八九十]+)\s*[、.]")
 NUMBERED_H2_RE = re.compile(r"^(?:\d+\.\d+|[(（][一二三四五六七八九十\d]+[)）])")
 NUMBERED_H3_RE = re.compile(r"^\d+\.\d+\.\d+")
+
+# 双栏检测阈值:窄栏块的宽度占比上限与最大行数、判定双栏所需的最小窄栏块数。
+COLUMN_NARROW_WIDTH_RATIO = 0.72
+COLUMN_NARROW_MAX_LINE_COUNT = 12
+COLUMN_MIN_NARROW_BLOCKS = 6
+COLUMN_MIN_GAP_RATIO = 0.12
+# 同页相邻块合并的尺寸/间距阈值(段落与其他元素采用不同上限)。
+PARAGRAPH_MERGE_MAX_CHARS = 1600
+NON_PARAGRAPH_MERGE_MAX_CHARS = 5000
+PARAGRAPH_MERGE_GAP_LIMIT = 26.0
+NON_PARAGRAPH_MERGE_GAP_LIMIT = 18.0
 
 
 def _extract_block_record(block: dict[str, Any]) -> dict[str, Any] | None:
@@ -71,8 +82,12 @@ def _extract_block_record(block: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _detect_columns(blocks: list[dict[str, Any]], page_width: float) -> dict[str, float]:
-    narrow_blocks = [block for block in blocks if block["width"] <= page_width * 0.72 and block["line_count"] <= 12]
-    if len(narrow_blocks) < 6:
+    narrow_blocks = [
+        block
+        for block in blocks
+        if block["width"] <= page_width * COLUMN_NARROW_WIDTH_RATIO and block["line_count"] <= COLUMN_NARROW_MAX_LINE_COUNT
+    ]
+    if len(narrow_blocks) < COLUMN_MIN_NARROW_BLOCKS:
         return {"column_count": 1, "split_x": 0.0, "column_top_y": 0.0, "column_bottom_y": 0.0}
 
     x_positions = sorted({round(block["bbox"][0], 1) for block in narrow_blocks})
@@ -87,7 +102,7 @@ def _detect_columns(blocks: list[dict[str, Any]], page_width: float) -> dict[str
             best_gap = gap
             split_x = midpoint
 
-    if best_gap < page_width * 0.12:
+    if best_gap < page_width * COLUMN_MIN_GAP_RATIO:
         return {"column_count": 1, "split_x": 0.0, "column_top_y": 0.0, "column_bottom_y": 0.0}
 
     left_blocks = [block for block in narrow_blocks if ((block["bbox"][0] + block["bbox"][2]) / 2.0) < split_x]
@@ -202,8 +217,8 @@ def _mergeable(prev: dict[str, Any], current: dict[str, Any]) -> bool:
         return False
 
     vertical_gap = float(current["bbox"][1]) - float(prev["bbox"][3])
-    max_chars = 1600 if current["element_type"] == "paragraph" else 5000
-    gap_limit = 26.0 if current["element_type"] == "paragraph" else 18.0
+    max_chars = PARAGRAPH_MERGE_MAX_CHARS if current["element_type"] == "paragraph" else NON_PARAGRAPH_MERGE_MAX_CHARS
+    gap_limit = PARAGRAPH_MERGE_GAP_LIMIT if current["element_type"] == "paragraph" else NON_PARAGRAPH_MERGE_GAP_LIMIT
     return vertical_gap <= gap_limit and (len(prev["text"]) + len(current["text"])) <= max_chars
 
 

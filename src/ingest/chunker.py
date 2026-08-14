@@ -88,6 +88,8 @@ def _base_chunk(
 
 
 def _page_metadata(page_records: list[dict[str, Any]]) -> dict[str, Any]:
+    if not page_records:
+        return {}
     sample = page_records[0]
     return {
         "doc_id": sample["doc_id"],
@@ -131,25 +133,46 @@ def _split_paragraph_group(paragraphs: list[dict[str, Any]], target_size: int, o
     if not joined:
         return []
 
+    # 先把超长段落按 target_size(留 overlap)切分为受控小片,避免整段原样保留。
+    units: list[dict[str, Any]] = []
+    for paragraph in joined:
+        text = normalize_text(paragraph["text"])
+        if not text:
+            continue
+        pieces = split_with_overlap(text, target_size=target_size, overlap=overlap) if len(text) > target_size else [text]
+        for piece in pieces:
+            units.append(
+                {
+                    "text": piece,
+                    "page_num": paragraph["page_num"],
+                    "section_title": paragraph.get("section_title"),
+                    "section_path": paragraph.get("section_path"),
+                    "chunk_type": paragraph.get("chunk_type", "text"),
+                    "element_type": paragraph.get("element_type", "paragraph"),
+                }
+            )
+    if not units:
+        return []
+
     segments: list[dict[str, Any]] = []
     current_text = ""
     current_pages: list[int] = []
-    current_section = joined[0].get("section_title")
-    current_section_path = joined[0].get("section_path")
-    current_chunk_type = joined[0].get("chunk_type", "text")
-    current_element_type = joined[0].get("element_type", "paragraph")
+    current_section = units[0]["section_title"]
+    current_section_path = units[0]["section_path"]
+    current_chunk_type = units[0]["chunk_type"]
+    current_element_type = units[0]["element_type"]
 
-    for paragraph in joined:
-        paragraph_section = paragraph.get("section_title")
-        paragraph_section_path = paragraph.get("section_path")
-        paragraph_chunk_type = paragraph.get("chunk_type", "text")
-        paragraph_element_type = paragraph.get("element_type", "paragraph")
+    for unit in units:
+        unit_section = unit["section_title"]
+        unit_section_path = unit["section_path"]
+        unit_chunk_type = unit["chunk_type"]
+        unit_element_type = unit["element_type"]
 
         if current_text and (
-            paragraph_section != current_section
-            or paragraph_section_path != current_section_path
-            or paragraph_chunk_type != current_chunk_type
-            or paragraph_element_type != current_element_type
+            unit_section != current_section
+            or unit_section_path != current_section_path
+            or unit_chunk_type != current_chunk_type
+            or unit_element_type != current_element_type
         ):
             segments.append(
                 {
@@ -164,13 +187,13 @@ def _split_paragraph_group(paragraphs: list[dict[str, Any]], target_size: int, o
             )
             current_text = ""
             current_pages = []
-            current_section = paragraph_section
-            current_section_path = paragraph_section_path
-            current_chunk_type = paragraph_chunk_type
-            current_element_type = paragraph_element_type
+            current_section = unit_section
+            current_section_path = unit_section_path
+            current_chunk_type = unit_chunk_type
+            current_element_type = unit_element_type
 
-        paragraph_text = normalize_text(paragraph["text"])
-        candidate = f"{current_text}\n\n{paragraph_text}".strip() if current_text else paragraph_text
+        unit_text = unit["text"]
+        candidate = f"{current_text}\n\n{unit_text}".strip() if current_text else unit_text
         if current_text and len(candidate) > target_size:
             segments.append(
                 {
@@ -184,15 +207,15 @@ def _split_paragraph_group(paragraphs: list[dict[str, Any]], target_size: int, o
                 }
             )
             overlap_text = current_text[-overlap:].strip() if overlap > 0 else ""
-            current_text = f"{overlap_text}\n\n{paragraph_text}".strip() if overlap_text else paragraph_text
-            current_pages = [current_pages[-1], paragraph["page_num"]]
+            current_text = f"{overlap_text}\n\n{unit_text}".strip() if overlap_text else unit_text
+            current_pages = [current_pages[-1], unit["page_num"]]
         else:
             current_text = candidate
-            current_pages.append(paragraph["page_num"])
-            current_section = paragraph_section
-            current_section_path = paragraph_section_path
-            current_chunk_type = paragraph_chunk_type
-            current_element_type = paragraph_element_type
+            current_pages.append(unit["page_num"])
+            current_section = unit_section
+            current_section_path = unit_section_path
+            current_chunk_type = unit_chunk_type
+            current_element_type = unit_element_type
 
     if current_text:
         segments.append(
@@ -255,15 +278,25 @@ def _split_child_text(text: str, *, target_size: int = CHILD_TARGET_SIZE, overla
         normalized = normalize_text(text)
         return [normalized] if normalized else []
 
-    chunks: list[str] = []
-    current = ""
+    # 先把超长段落按 target_size(留 overlap)切分为受控小片,避免整段原样保留。
+    pieces: list[str] = []
     for paragraph in paragraphs:
         paragraph = normalize_text(paragraph)
-        candidate = f"{current}\n\n{paragraph}".strip() if current else paragraph
+        if not paragraph:
+            continue
+        if len(paragraph) > target_size:
+            pieces.extend(split_with_overlap(paragraph, target_size=target_size, overlap=overlap))
+        else:
+            pieces.append(paragraph)
+
+    chunks: list[str] = []
+    current = ""
+    for piece in pieces:
+        candidate = f"{current}\n\n{piece}".strip() if current else piece
         if current and len(candidate) > target_size:
             chunks.append(normalize_text(current))
             overlap_text = current[-overlap:].strip() if overlap > 0 else ""
-            current = f"{overlap_text}\n\n{paragraph}".strip() if overlap_text else paragraph
+            current = f"{overlap_text}\n\n{piece}".strip() if overlap_text else piece
         else:
             current = candidate
     if current:

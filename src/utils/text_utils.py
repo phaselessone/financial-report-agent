@@ -139,6 +139,64 @@ def guess_industry(file_name: str) -> str:
     return "other"
 
 
+TITLE_DATE_SUFFIX_RE = re.compile(r"(?:[-_ ]?(?:20\d{2}[-/]?\d{2}[-/]?\d{2}|\d{6,8}|第?\d+版(?:\(英译中\))?))+$")
+TITLE_NOISE_PATTERNS = (
+    "研究报告正文 _ 数据中心 _ 东方财富网",
+    "研究报告正文 _ 数据中心",
+    "数据中心 _ 东方财富网",
+    "数据中心",
+)
+
+
+def industry_from_file_name(file_name: str) -> str:
+    return guess_industry(file_name)
+
+
+def short_title_from_file_name(file_name: str) -> str:
+    stem = strip_file_extension(Path(file_name).name)
+    match = NEW_FILE_NAME_RE.match(stem)
+    if match:
+        title = match.group("title").strip()
+    elif "：" in stem:
+        title = stem.split("：", 1)[1].strip()
+    elif ":" in stem:
+        title = stem.split(":", 1)[1].strip()
+    else:
+        parts = [part for part in stem.split("-") if part]
+        if len(parts) >= 3:
+            title = "-".join(parts[1:-1]).strip()
+        elif len(parts) >= 2:
+            title = "-".join(parts[1:]).strip()
+        else:
+            title = stem.strip()
+
+    normalized = normalize_text(title)
+    for pattern in TITLE_NOISE_PATTERNS:
+        normalized = normalized.replace(pattern, "").strip(" -_：:，,")
+    normalized = TITLE_DATE_SUFFIX_RE.sub("", normalized).strip(" -_：:，,")
+    return normalized or stem.strip()
+
+
+def topic_hint_from_title(title: str) -> str:
+    normalized = normalize_text(title)
+    if not normalized:
+        return ""
+    for separator in ("：", ":", "——", "-", "，", ","):
+        if separator in normalized:
+            suffix = normalized.split(separator, 1)[1].strip()
+            suffix = TITLE_DATE_SUFFIX_RE.sub("", suffix).strip(" -_：:，,")
+            if (
+                6 <= len(suffix) <= 36
+                and not re.fullmatch(r"(?:20\d{2}[-/]?\d{2}[-/]?\d{2}|\d{6,8}|第?\d+版(?:\(英译中\))?)", suffix)
+                and not suffix.isdigit()
+            ):
+                return suffix
+    cleaned = TITLE_DATE_SUFFIX_RE.sub("", normalized).strip(" -_：:，,")
+    if len(cleaned) > 36:
+        return cleaned[:36].rstrip("，,；; ") + "…"
+    return cleaned
+
+
 def guess_source_type(file_name: str, sample_text: str = "") -> str:
     combined = f"{file_name}\n{sample_text}".lower()
     if "东方财富网" in file_name or any(pattern in combined for pattern in ("eastmoney", "东方财富", "choice数据")):
@@ -149,7 +207,7 @@ def guess_source_type(file_name: str, sample_text: str = "") -> str:
 def make_doc_id(pdf_path: Path) -> str:
     stem = re.sub(r"\s+", "-", pdf_path.stem.strip())
     stem = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff_-]+", "-", stem).strip("-").lower()
-    digest = hashlib.sha1(str(pdf_path).encode("utf-8")).hexdigest()[:8]
+    digest = hashlib.sha1(pdf_path.name.encode("utf-8")).hexdigest()[:8]
     return f"{stem[:48]}-{digest}" if stem else f"doc-{digest}"
 
 

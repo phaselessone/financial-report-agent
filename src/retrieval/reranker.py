@@ -5,11 +5,15 @@ from typing import Any
 
 import torch
 
+from src.retrieval.embedder import resolve_device
 from src.retrieval.model_store import ensure_model_downloaded
+
+# 送入交叉编码器的最大 token 长度(截断阈值)。
+RERANK_MAX_LENGTH = 1024
 
 
 class CrossEncoderReranker:
-    def __init__(self, model_name: str, *, cache_dir: Path, device: str = "cuda") -> None:
+    def __init__(self, model_name: str, *, cache_dir: Path, device: str = "auto") -> None:
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
         model_path = ensure_model_downloaded(model_name, cache_dir)
@@ -17,7 +21,7 @@ class CrossEncoderReranker:
         self.model_path = model_path
         self.tokenizer = AutoTokenizer.from_pretrained(str(model_path), trust_remote_code=True)
         self.model = AutoModelForSequenceClassification.from_pretrained(str(model_path), trust_remote_code=True)
-        self.device = torch.device(device if torch.cuda.is_available() or device == "cpu" else "cpu")
+        self.device = torch.device(resolve_device(device))
         self.model.to(self.device)
         self.model.eval()
 
@@ -53,7 +57,7 @@ class CrossEncoderReranker:
                 texts,
                 padding=True,
                 truncation=True,
-                max_length=1024,
+                max_length=RERANK_MAX_LENGTH,
                 return_tensors="pt",
             )
             inputs = {key: value.to(self.device) for key, value in inputs.items()}

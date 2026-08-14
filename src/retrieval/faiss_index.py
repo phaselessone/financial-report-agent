@@ -1,7 +1,9 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +11,8 @@ import faiss
 import numpy as np
 
 from src.utils.io import ensure_dir, read_json, write_json
+
+logger = logging.getLogger(__name__)
 
 
 def _chunk_ids_hash(chunk_ids: list[str]) -> str:
@@ -53,7 +57,10 @@ class FaissDenseIndex:
 
     def save(self, output_dir: Path, *, embedding_dim: int) -> None:
         ensure_dir(output_dir)
-        faiss.write_index(self.index, str(output_dir / "faiss.index"))
+        index_path = output_dir / "faiss.index"
+        tmp_path = index_path.with_name(index_path.name + ".tmp")
+        faiss.write_index(self.index, str(tmp_path))
+        os.replace(tmp_path, index_path)
         write_json(output_dir / "chunk_ids.json", self.chunk_ids)
         write_json(output_dir / "faiss_metadata.json", _faiss_metadata(self.chunk_ids, embedding_dim))
 
@@ -84,8 +91,8 @@ def build_or_load_faiss_index(
             metadata = read_json(metadata_path)
             if _faiss_metadata_matches(metadata, chunk_ids=chunk_ids, embedding_dim=embeddings.shape[1]):
                 return FaissDenseIndex.load(output_dir)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("FAISS index cache invalid or unreadable (%s); rebuilding.", exc)
     dense_index = FaissDenseIndex.build(embeddings, chunk_ids)
     dense_index.save(output_dir, embedding_dim=embeddings.shape[1])
     return dense_index

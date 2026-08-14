@@ -1,4 +1,8 @@
-﻿from __future__ import annotations
+from __future__ import annotations
+
+from src.utils.env import load_env_files
+
+load_env_files()
 
 import argparse
 from pathlib import Path
@@ -19,7 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-cache-dir", type=Path, default=Path("models"))
     parser.add_argument("--embedding-model", default="BAAI/bge-m3")
     parser.add_argument("--reranker-model", default="BAAI/bge-reranker-v2-m3")
-    parser.add_argument("--device", default="cuda")
+    parser.add_argument("--device", default="auto")
     parser.add_argument("--embedding-batch-size", type=int, default=16)
     parser.add_argument("--rerank-batch-size", type=int, default=8)
     parser.add_argument("--dense-top-k", type=int, default=20)

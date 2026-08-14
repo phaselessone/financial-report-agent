@@ -1,11 +1,11 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 from time import perf_counter
 from typing import Any
 
 from src.retrieval.bm25_index import BM25Retriever, build_or_load_bm25_index
-from src.retrieval.embedder import DenseEmbedder, build_or_load_embeddings
+from src.retrieval.embedder import DenseEmbedder, build_or_load_embeddings, resolve_device
 from src.retrieval.faiss_index import DenseRetriever, build_or_load_faiss_index
 from src.retrieval.hybrid_retriever import HybridRetriever
 from src.retrieval.reranker import CrossEncoderReranker
@@ -60,6 +60,9 @@ GENERIC_QUERY_TERMS = {
     "聚焦",
     "强调",
 }
+# 混合检索中稠密分数与 BM25 分数的加权系数。
+HYBRID_ALPHA = 0.6
+HYBRID_BETA = 0.4
 
 
 class RetrievalRuntime:
@@ -201,7 +204,7 @@ def build_retrieval_runtime(
     model_cache_dir: Path,
     embedding_model: str,
     reranker_model: str,
-    device: str = "cuda",
+    device: str = "auto",
     embedding_batch_size: int = 16,
     rerank_batch_size: int = 8,
     dense_top_k: int = 20,
@@ -214,7 +217,8 @@ def build_retrieval_runtime(
     dense_output_dir = ensure_dir(output_dir / "indexes" / "dense")
     bm25_output_dir = ensure_dir(output_dir / "indexes" / "bm25")
 
-    embedder = DenseEmbedder(embedding_model, cache_dir=model_cache_dir, device=device)
+    resolved_device = resolve_device(device)
+    embedder = DenseEmbedder(embedding_model, cache_dir=model_cache_dir, device=resolved_device)
     embeddings, chunk_ids = build_or_load_embeddings(
         chunks=chunks,
         embedder=embedder,
@@ -233,8 +237,8 @@ def build_retrieval_runtime(
     bm25_index = build_or_load_bm25_index(chunks=chunks, output_dir=bm25_output_dir, rebuild=rebuild_indexes)
     bm25_retriever = BM25Retriever(bm25_index, chunk_lookup)
 
-    hybrid_retriever = HybridRetriever(alpha=0.6, beta=0.4)
-    reranker = CrossEncoderReranker(reranker_model, cache_dir=model_cache_dir, device=device)
+    hybrid_retriever = HybridRetriever(alpha=HYBRID_ALPHA, beta=HYBRID_BETA)
+    reranker = CrossEncoderReranker(reranker_model, cache_dir=model_cache_dir, device=resolved_device)
     return RetrievalRuntime(
         embedder=embedder,
         dense_retriever=dense_retriever,

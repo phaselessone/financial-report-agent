@@ -34,6 +34,8 @@ NOISY_SECTION_PATTERNS = (
     "投资评级说明",
     "评级说明",
 )
+# 标题重合得分的加权系数,用于提升命中标题/章节关键词的结果。
+TITLE_OVERLAP_WEIGHT = 0.12
 
 
 def _min_max_normalize(rows: list[dict[str, Any]]) -> dict[str, float]:
@@ -107,7 +109,7 @@ class HybridRetriever:
             payload["bm25_score"] = bm25_score
             payload["title_overlap_score"] = title_overlap
             payload["appendix_penalty"] = appendix_penalty
-            payload["score"] = self.alpha * dense_score + self.beta * bm25_score + 0.12 * title_overlap - appendix_penalty
+            payload["score"] = self.alpha * dense_score + self.beta * bm25_score + TITLE_OVERLAP_WEIGHT * title_overlap - appendix_penalty
             payload["method"] = "hybrid"
 
         results = sorted(merged.values(), key=lambda item: item["score"], reverse=True)[:top_k]

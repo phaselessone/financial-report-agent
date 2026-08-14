@@ -14,6 +14,7 @@ from src.ingest.chunker import (
 from src.ingest.cleaner import clean_pages
 from src.ingest.parser import parse_pdf
 from src.utils.io import JsonlWriter, ensure_dir, write_json
+from src.utils.text_utils import make_doc_id
 
 
 def run_ingest_pipeline(
@@ -50,6 +51,7 @@ def run_ingest_pipeline(
         "parent_chunk_count": 0,
         "chunk_count": 0,
         "badcase_count": 0,
+        "failed_pdf_count": 0,
         "production_strategy": PRODUCTION_STRATEGY,
         "processed_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -69,10 +71,71 @@ def run_ingest_pipeline(
     ):
         for index, pdf_path in enumerate(pdf_paths, start=1):
             print(f"[{index}/{len(pdf_paths)}] Processing {pdf_path.name}")
-            parsed_pages, parse_badcases = parse_pdf(pdf_path)
-            cleaned_pages, clean_notes = clean_pages(parsed_pages)
-            strategy_rows = build_chunk_strategies(cleaned_pages)
-            parent_rows = build_parent_context_chunks(cleaned_pages)
+            doc_id = make_doc_id(pdf_path)
+
+            try:
+                parsed_pages, parse_badcases = parse_pdf(pdf_path)
+            except Exception as exc:
+                totals["failed_pdf_count"] += 1
+                totals["badcase_count"] += 1
+                badcase_writer.write_row(
+                    {
+                        "doc_id": doc_id,
+                        "file_name": pdf_path.name,
+                        "stage": "parse",
+                        "issue_type": type(exc).__name__,
+                        "detail": str(exc),
+                    }
+                )
+                continue
+
+            if not parsed_pages:
+                totals["failed_pdf_count"] += 1
+                totals["badcase_count"] += 1
+                badcase_writer.write_row(
+                    {
+                        "doc_id": doc_id,
+                        "file_name": pdf_path.name,
+                        "stage": "parse",
+                        "issue_type": "empty_pdf",
+                        "detail": "No pages were parsed from the PDF.",
+                    }
+                )
+                continue
+
+            try:
+                cleaned_pages, clean_notes = clean_pages(parsed_pages)
+            except Exception as exc:
+                totals["failed_pdf_count"] += 1
+                totals["badcase_count"] += 1
+                badcase_writer.write_row(
+                    {
+                        "doc_id": doc_id,
+                        "file_name": pdf_path.name,
+                        "stage": "clean",
+                        "issue_type": type(exc).__name__,
+                        "detail": str(exc),
+                    }
+                )
+                continue
+
+            try:
+                strategy_rows = build_chunk_strategies(cleaned_pages)
+                parent_rows = build_parent_context_chunks(cleaned_pages)
+            except Exception as exc:
+                totals["failed_pdf_count"] += 1
+                totals["badcase_count"] += 1
+                badcase_writer.write_row(
+                    {
+                        "doc_id": doc_id,
+                        "file_name": pdf_path.name,
+                        "stage": "chunk",
+                        "issue_type": type(exc).__name__,
+                        "detail": str(exc),
+                    }
+                )
+                continue
+
             per_doc_stats.append(summarize_chunk_strategies(strategy_rows))
 
             for row in parsed_pages:
