@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import re
@@ -9,7 +9,6 @@ from typing import Any
 
 import torch
 
-from src.evaluation.benchmark_assets import industry_from_file_name, short_title_from_file_name, topic_hint_from_title
 from src.generation.abstain import compute_confidence_label, decide_abstention, select_used_evidence_ids, validate_answer_support
 from src.generation.citation_builder import build_citations
 from src.generation.prompt import (
@@ -21,7 +20,16 @@ from src.generation.prompt import (
     build_inductive_synthesis_prompt,
 )
 from src.retrieval.model_store import ensure_model_downloaded
-from src.utils.text_utils import extract_terms, first_sentence, normalize_for_match, normalize_text, strip_file_extension
+from src.utils.text_utils import (
+    extract_terms,
+    first_sentence,
+    industry_from_file_name,
+    normalize_for_match,
+    normalize_text,
+    short_title_from_file_name,
+    strip_file_extension,
+    topic_hint_from_title,
+)
 
 QUESTION_TYPE_KEYWORDS = {
     "comparison": ("\u6bd4\u8f83", "\u5206\u522b", "\u5dee\u5f02", "\u5bf9\u6bd4"),
@@ -147,7 +155,7 @@ NOISY_SECTION_PATTERNS = (
 TOPIC_NUMERIC_RE = re.compile(r"^(?:20\d{2}(?:[-/]?\d{2})?(?:[-/]?\d{2})?|\d{6,8}|\d+(?:\.\d+)?%?)$")
 TOPIC_DATE_RE = re.compile(r"^(?:20\d{2}[-/]?\d{2}[-/]?\d{2}|20\d{2}\u5e74\d{1,2}\u6708\d{1,2}\u65e5|\d{4}\u5e74|\d{1,2}\u6708|\d{1,2}\u65e5|\u7b2c\d+\u9875|\u7b2c\d+\u7248(?:\(\u82f1\u8bd1\u4e2d\))?)$")
 QUERY_REPORT_TITLE_RE = re.compile(r"\u300a([^\u300b]{2,120})\u300b")
-FALLBACK_ANSWER = "信息不足，暂无无法给出可靠答案。"
+FALLBACK_ANSWER = "信息不足，暂时无法给出可靠答案。"
 
 def is_fallback_answer(text: str) -> bool:
     return normalize_text(text) == FALLBACK_ANSWER
@@ -172,19 +180,19 @@ GENERIC_THEME_TERMS = {
     "\u8ddf\u8e2a",
 }
 BROAD_INDUCTIVE_GENERIC_TERMS = {
-    "??",
-    "??",
-    "??",
-    "??",
-    "??",
-    "??",
-    "??",
-    "??",
-    "??",
-    "??",
-    "??",
-    "??",
-    "??",
+    "近期",
+    "最近",
+    "最新",
+    "共同",
+    "共性",
+    "主题",
+    "报告",
+    "研报",
+    "总结",
+    "趋势",
+    "整体",
+    "关注",
+    "变化",
     "recent",
     "latest",
     "common",
@@ -196,16 +204,16 @@ BROAD_INDUCTIVE_GENERIC_TERMS = {
     "summary",
 }
 COARSE_DOMAIN_QUERY_TERMS = {
-    "????",
-    "??",
-    "???",
-    "??",
-    "??",
-    "??",
-    "??",
-    "??",
-    "???",
-    "??",
+    "半导体",
+    "电子",
+    "农业",
+    "医药",
+    "医疗",
+    "新能源",
+    "光伏",
+    "消费",
+    "白酒",
+    "储能",
     "agriculture",
     "semiconductor",
     "electronics",
@@ -232,13 +240,13 @@ ENGLISH_CLUSTER_NOISE_TERMS = {
     "edition",
 }
 BROAD_INDUCTIVE_MARKER_PHRASES = (
-    "??",
-    "??",
-    "??",
-    "??",
-    "??",
-    "??",
-    "??",
+    "近期研报",
+    "最近报告",
+    "共同主题",
+    "共性主题",
+    "共同关注",
+    "整体趋势",
+    "主要观点",
     "recent",
     "common themes",
     "shared themes",
@@ -517,7 +525,7 @@ def _is_noise_theme_term(term: str) -> bool:
         return True
     if compact in {normalize_for_match(token) for token in TOPIC_NOISE_TERMS}:
         return True
-    if normalized.lower().endswith('??') or normalized.lower().endswith('??'):
+    if normalized.lower().endswith('报告') or normalized.lower().endswith('研报'):
         return True
     return False
 
@@ -2922,7 +2930,7 @@ class LocalEvidenceAnswerer:
                 answer_mode=answer_mode,
             )
 
-        effective_json_failures = 0 if fallback_used else json_parse_failures
+        effective_json_failures = json_parse_failures
         fallback_reason = _fallback_abstain_reason(final_answer=final_answer, fallback_source=fallback_source)
         referenced_rows = [row for row in selected_evidence if row["evidence_id"] in set(used_evidence_ids)] or selected_evidence
         abstained, abstain_reason = decide_abstention(
@@ -3148,19 +3156,32 @@ def summarize_doc_candidates(doc_candidates: list[dict[str, Any]]) -> list[dict[
     return summary
 
 
-def parse_model_json(text: str) -> dict[str, Any] | None:
+def _strip_code_fences(text: str) -> str:
     payload = text.strip()
     if payload.startswith("```"):
-        payload = payload.strip("`")
+        payload = payload.strip("`").strip()
         if payload.lower().startswith("json"):
             payload = payload[4:].strip()
-    match = re.search(r"\{.*\}", payload, re.DOTALL)
-    if not match:
+    if payload.endswith("```"):
+        payload = payload.rstrip("`").strip()
+    return payload
+
+
+def parse_model_json(text: str) -> dict[str, Any] | None:
+    payload = _strip_code_fences(text)
+    if not payload:
         return None
-    try:
-        loaded = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(loaded, dict):
-        return None
-    return loaded
+    decoder = json.JSONDecoder()
+    best_end = -1
+    best_value: Any = None
+    for index, char in enumerate(payload):
+        if char not in "{[":
+            continue
+        try:
+            value, end = decoder.raw_decode(payload, index)
+        except json.JSONDecodeError:
+            continue
+        if end > best_end:
+            best_end = end
+            best_value = value
+    return best_value if isinstance(best_value, dict) else None
