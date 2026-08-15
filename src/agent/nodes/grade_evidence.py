@@ -35,8 +35,18 @@ def make_grade_evidence(config: AgentConfig):
         state["evidence_sufficient"] = sufficient
         if sufficient:
             state["missing_information"] = ""
+            state["failed_rewrite_rounds"] = 0
         elif not state.get("no_improvement"):
             state["missing_information"] = reason
+            state.setdefault("missing_reason_history", []).append(reason)
+            # Termination policy (gate remediation R1): a rewrite that surfaced
+            # new but still-insufficient evidence counts as a failed round;
+            # beyond the budget, abstain instead of burning steps.
+            if int(state.get("rewrite_count", 0)) > 0:
+                failed = int(state.get("failed_rewrite_rounds", 0)) + 1
+                state["failed_rewrite_rounds"] = failed
+                if failed > config.max_failed_rewrite_rounds:
+                    state["termination_reason"] = "abstain_evidence_insufficient"
         return state
 
     return grade_evidence

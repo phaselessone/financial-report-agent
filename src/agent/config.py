@@ -7,12 +7,17 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class AgentConfig:
-    max_steps: int = 8
+    # max_steps was 8 in P2; raised to 12 (gate remediation: the verification
+    # retry policy needs room for one rewrite + re-retrieval cycle).
+    max_steps: int = 12
     max_retrieval_rounds: int = 3
     max_query_rewrites: int = 2
     max_generation_attempts: int = 2
     max_llm_calls: int = 6
     max_total_tokens: int = 0  # 0 = token budget disabled (checklist §P3 API cost knob)
+    # abstain when a post-rewrite grading round is still insufficient this many
+    # times in a row (checklist §P3 gate remediation R1: termination policy)
+    max_failed_rewrite_rounds: int = 0
 
     # deterministic-only grading in v1 (checklist: prefer deterministic; API only when undecidable)
     grade_mode: str = "deterministic"

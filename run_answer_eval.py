@@ -11,16 +11,12 @@ from time import perf_counter
 from typing import Any
 
 from src.evaluation.answer_eval import evaluate_answer_results, materialize_answer_eval_sets
-from src.evaluation.benchmark_assets import build_answer_seed_draft, industry_from_file_name, prepare_benchmark_assets, write_answer_seed_draft
+from src.evaluation.benchmark_assets import build_answer_seed_draft, prepare_benchmark_assets, write_answer_seed_draft
 from src.evaluation.output_archive import archive_output_bundle, default_artifact_label, resolve_artifact_dir, write_scratch_run_policy
 from src.evaluation.run_metadata import build_run_metadata
 from src.evaluation.retrieval_eval import materialize_eval_set
+from src.retrieval.domain_priority import apply_retrieval_domain_priority
 from src.utils.io import ensure_dir, read_jsonl
-
-DOMAIN_COMPATIBILITY_GROUPS = {
-    "consumer": {"consumer", "liquor"},
-    "liquor": {"consumer", "liquor"},
-}
 
 
 def _normalize_limit(value: int) -> int:
@@ -82,53 +78,6 @@ def validate_benchmark_profile(*, profile: str, split: str, chunks_path: Path, c
                 f"benchmark profile '{profile}' requires the historical stage6 corpus. "
                 "Use --chunks-path tmp_stage6_data/chunks/chunks.jsonl and --corpus-label stage6-historical."
             )
-
-
-def _row_domain_bucket(row: dict[str, Any]) -> str:
-    return str(row.get("industry") or industry_from_file_name(str(row.get("file_name", ""))) or "")
-
-
-def _normalize_domain_bucket(bucket: str) -> str:
-    return (bucket or "").strip().lower()
-
-
-def _is_weak_domain_bucket(bucket: str) -> bool:
-    normalized = _normalize_domain_bucket(bucket)
-    return not normalized or normalized == "other"
-
-
-def _domains_compatible(left: str, right: str) -> bool:
-    left_normalized = _normalize_domain_bucket(left)
-    right_normalized = _normalize_domain_bucket(right)
-    if not left_normalized or not right_normalized:
-        return False
-    if left_normalized == right_normalized:
-        return True
-    return (
-        right_normalized in DOMAIN_COMPATIBILITY_GROUPS.get(left_normalized, {left_normalized})
-        or left_normalized in DOMAIN_COMPATIBILITY_GROUPS.get(right_normalized, {right_normalized})
-    )
-
-
-def apply_retrieval_domain_priority(retrieval_result: dict[str, Any], domain_hint: str) -> dict[str, Any]:
-    normalized_hint = _normalize_domain_bucket(domain_hint)
-    if _is_weak_domain_bucket(normalized_hint):
-        return retrieval_result
-    prioritized_result = dict(retrieval_result)
-    for key in ("dense_rows", "bm25_rows", "hybrid_rows", "rerank_rows"):
-        rows = list(retrieval_result.get(key, []))
-        if not rows:
-            continue
-        exact_rows = [row for row in rows if _normalize_domain_bucket(_row_domain_bucket(row)) == normalized_hint]
-        compatible_rows = [
-            row
-            for row in rows
-            if row not in exact_rows and _domains_compatible(_row_domain_bucket(row), normalized_hint)
-        ]
-        other_rows = [row for row in rows if row not in exact_rows and row not in compatible_rows]
-        if exact_rows or compatible_rows:
-            prioritized_result[key] = exact_rows + compatible_rows + other_rows
-    return prioritized_result
 
 
 def build_failed_result_row(

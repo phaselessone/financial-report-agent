@@ -523,7 +523,8 @@ _AGENT_ABSTAIN_QUERY_TEMPLATES = {
 
 
 def _weakened_comparison_query(industry: str) -> str:
-    return f"{industry_label(industry)}行业两份研报的关注重点有何不同？"
+    del industry  # intentionally domain-free: first-round retrieval must miss the target docs
+    return "两份研报的关注重点有何不同？"
 
 
 def _agent_row(
@@ -541,8 +542,9 @@ def _agent_row(
     must_recover: bool = False,
     expected_first_failure: str = "",
     review_notes: str,
+    domain_hint: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    row: dict[str, Any] = {
         "question_id": question_id,
         "category": category,
         "query": query,
@@ -558,7 +560,9 @@ def _agent_row(
         "must_recover": must_recover,
         "expected_first_failure": expected_first_failure,
         "review_notes": review_notes,
+        "domain_hint": industry if domain_hint is None else domain_hint,
     }
+    return row
 
 
 def _agent_ordinal(industry: str, category: str) -> str:
@@ -619,6 +623,7 @@ def build_agent_seed_draft(
                 must_recover=True,
                 expected_first_failure="source_diversity_missing",
                 review_notes="agent_recovery_weakened_comparison:dev",
+                domain_hint="",
             )
         )
 

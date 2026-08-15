@@ -51,7 +51,9 @@ def build_agent_graph(runtime, answerer, llm, config: AgentConfig):
         draft = state.get("draft_answer") or {}
         if draft.get("abstained") or (draft.get("support_validation") or {}).get("supported", False):
             return "finalize"
-        return "synthesize"  # verification retry
+        if state.get("unsupported_retry"):
+            return "rewrite_query"  # verification retry: rewrite + re-retrieve
+        return "synthesize"  # legacy regenerate-on-same-evidence retry
 
     graph = StateGraph(dict)
     graph.add_node("analyze_query", make_analyze_query(config))
@@ -79,7 +81,7 @@ def build_agent_graph(runtime, answerer, llm, config: AgentConfig):
     graph.add_conditional_edges(
         "verify_answer",
         route_after_verify,
-        {"synthesize": "synthesize", "finalize": "finalize"},
+        {"synthesize": "synthesize", "rewrite_query": "rewrite_query", "finalize": "finalize"},
     )
     graph.add_edge("finalize", END)
     return graph.compile()

@@ -21,7 +21,7 @@ from src.evaluation.answer_eval import (
 from src.evaluation.benchmark_assets import build_doc_manifest
 from src.utils.io import write_json, write_jsonl
 
-AGENT_SEED_PRESERVE_FIELDS = ("category", "must_recover", "expected_first_failure")
+AGENT_SEED_PRESERVE_FIELDS = ("category", "must_recover", "expected_first_failure", "domain_hint")
 
 # P3 hard gate thresholds (checklist §P3 Gate). Tunable module-level constants.
 P3_GATE_QUALITY_GAIN = 0.05

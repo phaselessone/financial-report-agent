@@ -34,6 +34,9 @@ class AgentState(TypedDict, total=False):
     evidence_sufficient: bool
     missing_information: str
     no_improvement: bool
+    failed_rewrite_rounds: int
+    missing_reason_history: list[str]
+    unsupported_retry: bool
 
     # generation
     draft_answer: dict[str, Any] | None
@@ -71,6 +74,9 @@ def new_agent_state(*, query: str, domain_hint: str = "", question_type: str = "
         evidence_sufficient=False,
         missing_information="",
         no_improvement=False,
+        failed_rewrite_rounds=0,
+        missing_reason_history=[],
+        unsupported_retry=False,
         draft_answer=None,
         support_validation=None,
         step_count=0,

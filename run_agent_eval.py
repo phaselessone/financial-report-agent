@@ -74,7 +74,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rebuild-indexes", action="store_true")
     parser.add_argument("--llm-provider", default="")
     parser.add_argument("--llm-model", default="")
-    parser.add_argument("--max-steps", type=int, default=8)
+    parser.add_argument("--max-steps", type=int, default=12)
     parser.add_argument("--max-retrieval-rounds", type=int, default=3)
     parser.add_argument("--max-query-rewrites", type=int, default=2)
     parser.add_argument("--max-generation-attempts", type=int, default=2)
@@ -143,7 +143,7 @@ def run_agentic_eval_rows(
                 llm=llm,
                 config=config,
                 query=eval_row["query"],
-                domain_hint=str(eval_row.get("industry", "") or ""),
+                domain_hint=str(eval_row.get("domain_hint", eval_row.get("industry", "")) or ""),
                 question_type=str(eval_row.get("question_type", "") or ""),
             )
             trace_rows.append(
@@ -180,13 +180,13 @@ def run_baseline_rows(
             retrieval_result = runtime.search(eval_row["query"])
             retrieval_result = apply_retrieval_domain_priority(
                 retrieval_result,
-                str(eval_row.get("industry", "") or ""),
+                str(eval_row.get("domain_hint", eval_row.get("industry", "")) or ""),
             )
             answer_row = answerer.answer(
                 query=eval_row["query"],
                 question_type=eval_row.get("question_type") or infer_question_type(eval_row["query"]),
                 retrieval_result=retrieval_result,
-                query_domain_hint=eval_row.get("industry", ""),
+                query_domain_hint=eval_row.get("domain_hint", eval_row.get("industry", "")),
             )
             answer_row["question_id"] = eval_row["question_id"]
             answer_row["timings"] = {

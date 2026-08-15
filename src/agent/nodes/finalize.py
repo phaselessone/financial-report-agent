@@ -27,10 +27,17 @@ def make_finalize():
     def finalize(state: dict[str, Any]) -> dict[str, Any]:
         state["step_count"] = int(state.get("step_count", 0)) + 1
         draft = state.get("draft_answer")
+        reason = state.get("termination_reason") or ""
         if draft is not None:
-            final = draft
+            supported = bool((draft.get("support_validation") or {}).get("supported", False))
+            if draft.get("abstained") or supported or reason in ("", "completed"):
+                final = draft
+            else:
+                # Terminated with a stale unsupported draft (e.g. the verification
+                # retry refetched evidence that still graded insufficient): abstain.
+                final = _abstain_row(state, reason or "no_evidence")
         else:
-            final = _abstain_row(state, state.get("termination_reason") or "no_evidence")
+            final = _abstain_row(state, reason or "no_evidence")
         if not state.get("termination_reason"):
             state["termination_reason"] = "completed"
         state["final_answer"] = final

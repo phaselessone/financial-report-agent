@@ -158,10 +158,15 @@ class AgentSeedBuildTests(unittest.TestCase):
             self.assertTrue(row["must_recover"])
             self.assertEqual(row["expected_first_failure"], "source_diversity_missing")
             self.assertNotIn("《", row["query"])
+            self.assertEqual(row["domain_hint"], "")
         numeric_rows = [row for row in rows if row["category"] == "agent_numeric_missing"]
         for row in numeric_rows:
             self.assertTrue(row["must_recover"])
             self.assertEqual(row["expected_first_failure"], "numeric_missing")
+            self.assertEqual(row["domain_hint"], row["industry"])
+        for row in rows:
+            if row["category"] not in ("agent_recovery", "agent_numeric_missing"):
+                self.assertEqual(row["domain_hint"], row["industry"])
 
     def test_question_ids_are_unique(self) -> None:
         rows = build_agent_seed_draft(retrieval_seed_rows=self.seed_rows, chunks=self.chunks, manifest=self.manifest)
@@ -202,7 +207,7 @@ class AgentSeedMaterializationTests(unittest.TestCase):
         seed_path = SCRATCH_DIR / "agent_seed.jsonl"
         write_agent_seed_draft(self.agent_rows, seed_path)
         resolved, missing = self._materialize(
-            seed_path, preserve_fields=("category", "must_recover", "expected_first_failure")
+            seed_path, preserve_fields=("category", "must_recover", "expected_first_failure", "domain_hint")
         )
         self.assertEqual(len(resolved), 20)
         self.assertEqual(missing, [])
@@ -210,6 +215,7 @@ class AgentSeedMaterializationTests(unittest.TestCase):
             self.assertIn("category", row)
             self.assertIn("must_recover", row)
             self.assertIn("expected_first_failure", row)
+            self.assertIn("domain_hint", row)
         self.assertEqual(
             Counter(row["category"] for row in resolved),
             {"agent_recovery": 4, "agent_multi_source": 8, "agent_numeric_missing": 4, "agent_abstain": 4},

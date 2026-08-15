@@ -238,12 +238,74 @@ class AgentFlowTests(unittest.TestCase):
             runtime=runtime,
             answerer=answerer,
             llm=llm,
-            config=AgentConfig(),
+            config=AgentConfig(max_retrieval_rounds=1),  # legacy regenerate path when re-retrieval is exhausted
             query="半导体行业景气度如何？",
         )
         self.assertEqual(state["generation_count"], 2)
         self.assertEqual(state["termination_reason"], "completed")
         self.assertEqual(state["final_answer"]["final_answer"], "第二次草稿（修复后）")
+
+    def test_unsupported_draft_retries_with_rewrite_and_fresh_evidence(self) -> None:
+        first_evidence = make_result(
+            [
+                make_row(chunk_id="c1", doc_id="d1", text="A公司强调AI算力需求。"),
+                make_row(chunk_id="c3", doc_id="d2", text="B公司聚焦存储涨价。"),
+            ]
+        )
+        second_evidence = make_result(
+            [
+                make_row(chunk_id="c2", doc_id="d1", text="A公司强调AI算力需求。"),
+                make_row(chunk_id="c4", doc_id="d2", text="B公司聚焦存储涨价。"),
+            ]
+        )
+        runtime = FakeRuntime([first_evidence, second_evidence])
+        llm = FakeLLM([rewrite_response("A公司 B公司 策略 对比", "source_diversity_missing")])
+        unsupported = supported_draft("第一次草稿")
+        unsupported["support_validation"] = {"supported": False}
+        answerer = FakeAnswerer([unsupported, supported_draft("A公司强调AI算力，B公司聚焦存储。")])
+        state = run_agentic_rag(
+            runtime=runtime,
+            answerer=answerer,
+            llm=llm,
+            config=AgentConfig(),
+            query="比较A公司和B公司的策略差异",
+        )
+        self.assertEqual(state["termination_reason"], "completed")
+        self.assertEqual(state["retrieval_count"], 2)
+        self.assertEqual(state["rewrite_count"], 1)
+        self.assertEqual(state["generation_count"], 2)
+        self.assertEqual(len(state["rewritten_queries"]), 1)
+        self.assertEqual(state["final_answer"]["final_answer"], "A公司强调AI算力，B公司聚焦存储。")
+
+    def test_verification_retry_abstains_when_refetched_evidence_still_insufficient(self) -> None:
+        # Round 1 grades sufficient (two sources) and synthesizes an unsupported
+        # draft. The verification retry rewrites + refetches; the fresh evidence
+        # is new but single-source, so the post-rewrite grade fails and the run
+        # abstains instead of regenerating.
+        first_evidence = make_result(
+            [
+                make_row(chunk_id="c1", doc_id="d1", text="A公司强调AI算力需求。"),
+                make_row(chunk_id="c3", doc_id="d2", text="B公司聚焦存储涨价。"),
+            ]
+        )
+        second_evidence = make_result([make_row(chunk_id="c2", doc_id="d1", text="A公司聚焦国产替代。")])
+        runtime = FakeRuntime([first_evidence, second_evidence])
+        llm = FakeLLM([rewrite_response("A公司 B公司 策略", "source_diversity_missing")])
+        unsupported = supported_draft("草稿")
+        unsupported["support_validation"] = {"supported": False}
+        answerer = FakeAnswerer([unsupported])
+        state = run_agentic_rag(
+            runtime=runtime,
+            answerer=answerer,
+            llm=llm,
+            config=AgentConfig(),
+            query="比较A公司和B公司的策略差异",
+        )
+        self.assertEqual(state["termination_reason"], "abstain_evidence_insufficient")
+        self.assertTrue(state["final_answer"]["abstained"])
+        self.assertEqual(state["retrieval_count"], 2)
+        self.assertEqual(state["rewrite_count"], 1)
+        self.assertEqual(state["generation_count"], 1)
 
     def test_analyze_query_makes_no_llm_call(self) -> None:
         runtime = FakeRuntime([make_result([make_row(chunk_id="c1", doc_id="d1", text="半导体行业景气度持续回升。")])])
@@ -259,6 +321,53 @@ class AgentFlowTests(unittest.TestCase):
         self.assertEqual(len(llm.calls), 0)
         self.assertEqual(state["question_type"], "fact")
         self.assertIn(state["answer_mode"], ("fact", "numeric_fact"))
+
+    def test_retrieve_applies_domain_priority(self) -> None:
+        liquor_row = make_row(chunk_id="c1", doc_id="d1", text="白酒行业景气度持续回升。")
+        semi_row = make_row(chunk_id="c2", doc_id="d2", text="半导体行业景气度持续回升。")
+        liquor_row["file_name"] = "白酒_2026-01-01_AP0001_白酒周报.pdf"
+        semi_row["file_name"] = "半导体_2026-01-01_AP0001_半导体周报.pdf"
+        runtime = FakeRuntime([make_result([liquor_row, semi_row])])
+        llm = FakeLLM([])
+        answerer = FakeAnswerer([supported_draft("半导体行业景气度持续回升。")])
+        state = run_agentic_rag(
+            runtime=runtime,
+            answerer=answerer,
+            llm=llm,
+            config=AgentConfig(),
+            query="半导体行业景气度如何？",
+            domain_hint="semiconductor",
+        )
+        rows = state["last_retrieval_result"]["rerank_rows"]
+        self.assertEqual([row["chunk_id"] for row in rows], ["c2", "c1"])
+        self.assertEqual(state["termination_reason"], "completed")
+
+    def test_rewrite_prompt_carries_domain_evidence_and_missing_reason(self) -> None:
+        single_source = make_result([make_row(chunk_id="c1", doc_id="d1", text="A公司强调AI算力需求。")])
+        two_sources = make_result(
+            [
+                make_row(chunk_id="c1", doc_id="d1", text="A公司强调AI算力需求。"),
+                make_row(chunk_id="c3", doc_id="d2", text="B公司聚焦存储涨价。"),
+            ]
+        )
+        runtime = FakeRuntime([single_source, two_sources])
+        llm = FakeLLM([rewrite_response("A公司 B公司 策略 对比", "source_diversity_missing")])
+        answerer = FakeAnswerer([supported_draft("A公司强调AI算力，B公司聚焦存储。")])
+        state = run_agentic_rag(
+            runtime=runtime,
+            answerer=answerer,
+            llm=llm,
+            config=AgentConfig(),
+            query="比较A公司和B公司的策略差异",
+            domain_hint="semiconductor",
+        )
+        self.assertEqual(state["termination_reason"], "completed")
+        rewrite_call = llm.calls[0]
+        user_prompt = rewrite_call["messages"][1]["content"]
+        self.assertIn("Domain hint: semiconductor", user_prompt)
+        self.assertIn("Question type: comparison", user_prompt)
+        self.assertIn("Missing information: insufficient_source_diversity", user_prompt)
+        self.assertIn("A公司强调AI算力需求。", user_prompt)
 
 
 if __name__ == "__main__":

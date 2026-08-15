@@ -111,7 +111,7 @@ class BudgetAndTerminationTests(unittest.TestCase):
             runtime=runtime,
             answerer=answerer,
             llm=llm,
-            config=AgentConfig(max_retrieval_rounds=2),
+            config=AgentConfig(max_retrieval_rounds=2, max_failed_rewrite_rounds=5),
             query="比较A公司和B公司的策略差异",
         )
         self.assertEqual(state["retrieval_count"], 2)
@@ -128,11 +128,71 @@ class BudgetAndTerminationTests(unittest.TestCase):
             runtime=runtime,
             answerer=answerer,
             llm=llm,
-            config=AgentConfig(max_generation_attempts=2),
+            config=AgentConfig(max_generation_attempts=2, max_retrieval_rounds=1),
             query="半导体行业景气度如何？",
         )
         self.assertEqual(state["generation_count"], 2)
         self.assertEqual(state["termination_reason"], "max_generation_attempts")
+
+    def test_abstains_when_rewritten_evidence_still_insufficient(self) -> None:
+        # Round 1: single source (insufficient for comparison). Round 2: a NEW
+        # chunk from the same doc — still single-source, so the post-rewrite
+        # grade fails again and the agent must abstain instead of burning steps.
+        runtime = FakeRuntime(
+            [
+                make_result([make_row(chunk_id="c1", doc_id="d1", text="A公司强调AI算力需求。")]),
+                make_result([make_row(chunk_id="c2", doc_id="d1", text="A公司聚焦国产替代。")]),
+            ]
+        )
+        llm = FakeLLM([rewrite_response("A公司 B公司 策略", "source_diversity_missing") for _ in range(10)])
+        answerer = FakeAnswerer([])
+        state = run_agentic_rag(
+            runtime=runtime,
+            answerer=answerer,
+            llm=llm,
+            config=AgentConfig(),
+            query="比较A公司和B公司的策略差异",
+        )
+        self.assertEqual(state["termination_reason"], "abstain_evidence_insufficient")
+        self.assertEqual(state["retrieval_count"], 2)
+        self.assertEqual(state["rewrite_count"], 1)
+        self.assertEqual(state["generation_count"], 0)
+        self.assertTrue(state["final_answer"]["abstained"])
+        self.assertEqual(state["final_answer"]["abstain_reason"], "abstain_evidence_insufficient")
+        self.assertEqual(len(llm.calls), 1)
+
+    def test_insufficient_rewrite_rounds_counter_resets_on_success(self) -> None:
+        # A failing post-rewrite grade then a successful round must not leak strikes.
+        runtime = FakeRuntime(
+            [
+                make_result([make_row(chunk_id="c1", doc_id="d1", text="A公司强调AI算力需求。")]),
+                make_result([make_row(chunk_id="c2", doc_id="d1", text="A公司聚焦国产替代。")]),
+                make_result(
+                    [
+                        make_row(chunk_id="c3", doc_id="d1", text="A公司强调AI算力需求。"),
+                        make_row(chunk_id="c4", doc_id="d2", text="B公司聚焦存储涨价。"),
+                    ]
+                ),
+            ]
+        )
+        llm = FakeLLM(
+            [
+                rewrite_response("A公司 国产替代", "source_diversity_missing"),
+                rewrite_response("A公司 B公司 策略 对比", "source_diversity_missing"),
+            ]
+        )
+        answerer = FakeAnswerer([supported_draft("A公司强调AI算力，B公司聚焦存储。")])
+        state = run_agentic_rag(
+            runtime=runtime,
+            answerer=answerer,
+            llm=llm,
+            config=AgentConfig(max_failed_rewrite_rounds=2, max_steps=12),
+            query="比较A公司和B公司的策略差异",
+        )
+        # first post-rewrite grade failed (strike 1 <= 2), second rewrite recovered
+        self.assertEqual(state["termination_reason"], "completed")
+        self.assertEqual(state["rewrite_count"], 2)
+        self.assertEqual(state["failed_rewrite_rounds"], 0)
 
     def test_llm_calls_log_records_each_call_with_node_metadata(self) -> None:
         runtime = FakeRuntime(
@@ -188,7 +248,7 @@ class BudgetAndTerminationTests(unittest.TestCase):
             runtime=runtime,
             answerer=answerer,
             llm=llm,
-            config=AgentConfig(max_total_tokens=10),
+            config=AgentConfig(max_total_tokens=10, max_failed_rewrite_rounds=5),
             query="比较A公司和B公司的策略差异",
         )
         self.assertEqual(state["termination_reason"], "max_total_tokens")

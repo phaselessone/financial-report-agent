@@ -6,6 +6,7 @@ from typing import Any
 
 from src.agent.config import AgentConfig
 from src.agent.policies import begin_node, new_evidence_ids
+from src.retrieval.domain_priority import apply_retrieval_domain_priority
 
 
 def make_retrieve(runtime, config: AgentConfig):
@@ -17,6 +18,10 @@ def make_retrieve(runtime, config: AgentConfig):
             return state
 
         result = runtime.search(state["active_query"])
+        # Align with the baseline eval loop: prefer evidence matching the query
+        # domain before grading (checklist §P3 gate remediation R2).
+        domain_hint = state.get("query_domain_bucket", "") or state.get("domain_hint", "")
+        result = apply_retrieval_domain_priority(result, domain_hint)
         state["retrieval_count"] = int(state.get("retrieval_count", 0)) + 1
 
         rows = list(result.get("rerank_rows") or result.get("hybrid_rows") or [])

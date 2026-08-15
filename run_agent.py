@@ -31,7 +31,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default=None, help="Legacy alias: sets both retrieval devices.")
     parser.add_argument("--llm-provider", default="")
     parser.add_argument("--llm-model", default="")
-    parser.add_argument("--max-steps", type=int, default=8)
+    parser.add_argument("--max-steps", type=int, default=12)
     parser.add_argument("--max-retrieval-rounds", type=int, default=3)
     parser.add_argument("--max-query-rewrites", type=int, default=2)
     parser.add_argument("--max-generation-attempts", type=int, default=2)

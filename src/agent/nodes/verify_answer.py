@@ -28,7 +28,18 @@ def make_verify_answer(config: AgentConfig):
         if abstained or supported:
             return state  # finalize
 
-        # Verification retry: regenerate while attempts and LLM budget remain.
+        # Retry policy (gate remediation): an unsupported draft first tries to
+        # rewrite + re-retrieve fresher evidence; only when the retrieval budget
+        # is exhausted does it fall back to regenerating on the same evidence.
+        if (
+            int(state.get("rewrite_count", 0)) < config.max_query_rewrites
+            and int(state.get("retrieval_count", 0)) < config.max_retrieval_rounds
+            and int(state.get("llm_call_count", 0)) < config.max_llm_calls
+        ):
+            state["missing_information"] = state.get("missing_information") or "unsupported_answer"
+            state["unsupported_retry"] = True
+            return state  # rewrite_query
+        state["unsupported_retry"] = False
         if (
             int(state.get("generation_count", 0)) < config.max_generation_attempts
             and int(state.get("llm_call_count", 0)) < config.max_llm_calls
