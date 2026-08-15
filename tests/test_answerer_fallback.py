@@ -1,4 +1,4 @@
-﻿import unittest
+import unittest
 from unittest.mock import patch
 
 from src.generation.answerer import FALLBACK_ANSWER, LocalEvidenceAnswerer
@@ -28,15 +28,15 @@ class AnswererFallbackTests(unittest.TestCase):
             "rerank_rows": [],
             "timings": {"retrieval_latency_ms": 0.0, "rerank_latency_ms": 0.0},
         }
-        with patch('src.generation.answerer._prepare_evidence', return_value=([evidence_row], [], ['doc-1'], None, False)), patch(
-            'src.generation.answerer._fallback_payload',
+        with patch('src.generation.answer_service._prepare_evidence', return_value=([evidence_row], [], ['doc-1'], None, False)), patch(
+            'src.generation.answer_service._fallback_payload',
             return_value={
                 'final_answer': FALLBACK_ANSWER,
                 'evidence_summary': '',
                 'uncertainty_note': '',
                 'used_evidence_ids': [],
             },
-        ), patch('src.generation.answerer.build_answer_prompt', return_value='prompt'):
+        ), patch('src.generation.answer_service.build_answer_prompt', return_value='prompt'):
             result = LocalEvidenceAnswerer.answer(
                 answerer,
                 query='测试问题',

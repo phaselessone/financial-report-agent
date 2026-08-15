@@ -29,9 +29,9 @@ class InvalidJsonAbstainTests(unittest.TestCase):
             "timings": {"retrieval_latency_ms": 0.0, "rerank_latency_ms": 0.0},
         }
         with patch(
-            'src.generation.answerer._prepare_evidence',
+            'src.generation.answer_service._prepare_evidence',
             return_value=([evidence_row], [], ['doc-1'], None, False),
-        ), patch('src.generation.answerer.build_answer_prompt', return_value='prompt'):
+        ), patch('src.generation.answer_service.build_answer_prompt', return_value='prompt'):
             result = LocalEvidenceAnswerer.answer(
                 answerer,
                 query='晶圆代工价格是多少？',

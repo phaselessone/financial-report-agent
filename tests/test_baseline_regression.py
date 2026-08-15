@@ -57,7 +57,7 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
     override = case.get("prepare_evidence_override")
     retrieval_result = build_retrieval_result(case.get("rows", []))
     if override is not None:
-        with patch("src.generation.answerer._prepare_evidence", return_value=tuple(override)):
+        with patch("src.generation.answer_service._prepare_evidence", return_value=tuple(override)):
             result = LocalEvidenceAnswerer.answer(
                 answerer,
                 query=case["query"],
