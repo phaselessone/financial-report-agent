@@ -8,7 +8,11 @@ from collections import Counter
 from pathlib import Path
 
 from src.evaluation.answer_eval import _materialize_answer_eval_seed
-from src.evaluation.benchmark_assets import build_agent_seed_draft, write_agent_seed_draft
+from src.evaluation.benchmark_assets import (
+    _AGENT_DECOY_NUMBERS,
+    build_agent_seed_draft,
+    write_agent_seed_draft,
+)
 
 INDUSTRIES = ("semiconductor", "new_energy", "consumer", "liquor")
 INDUSTRY_NAMES = {
@@ -157,15 +161,19 @@ class AgentSeedBuildTests(unittest.TestCase):
         for row in recovery_rows:
             self.assertTrue(row["must_recover"])
             self.assertEqual(row["expected_first_failure"], "source_diversity_missing")
-            self.assertNotIn("《", row["query"])
-            self.assertEqual(row["domain_hint"], "")
+            # single-doc anchored query: forces round-1 source diversity failure
+            self.assertIn("《", row["query"])
+            self.assertEqual(row["domain_hint"], row["industry"])
         numeric_rows = [row for row in rows if row["category"] == "agent_numeric_missing"]
         for row in numeric_rows:
             self.assertTrue(row["must_recover"])
             self.assertEqual(row["expected_first_failure"], "numeric_missing")
             self.assertEqual(row["domain_hint"], row["industry"])
+            # decoy number in the query forces round-1 numeric_missing grading
+            self.assertIn(_AGENT_DECOY_NUMBERS[row["industry"]], row["query"])
+            self.assertTrue(row["query"].endswith("多少？"))
         for row in rows:
-            if row["category"] not in ("agent_recovery", "agent_numeric_missing"):
+            if row["category"] == "agent_abstain":
                 self.assertEqual(row["domain_hint"], row["industry"])
 
     def test_question_ids_are_unique(self) -> None:
@@ -177,6 +185,54 @@ class AgentSeedBuildTests(unittest.TestCase):
         first = build_agent_seed_draft(retrieval_seed_rows=self.seed_rows, chunks=self.chunks, manifest=self.manifest)
         second = build_agent_seed_draft(retrieval_seed_rows=self.seed_rows, chunks=self.chunks, manifest=self.manifest)
         self.assertEqual(first, second)
+
+    def test_answer_chunk_selection_rejects_analyst_header_junk(self) -> None:
+        from src.evaluation.benchmark_assets import _select_answer_chunk
+
+        junk = make_chunk(
+            chunk_id="junk1",
+            doc_id="semiconductor-doc1",
+            text="投资评级：看好（维持） 行业走势图 陈蓉芳（分析师） chenrongfang@kysec.cn 证书编号：S0790524120002",
+        )
+        good = make_chunk(
+            chunk_id="good1",
+            doc_id="semiconductor-doc1",
+            text="半导体行业景气度持续回升，晶圆代工营收同比增长18%。",
+        )
+        selected = _select_answer_chunk([junk, good], mode="summary")
+        self.assertEqual(selected["chunk_id"], "good1")
+
+    def test_answer_chunk_selection_rejects_tiny_cells(self) -> None:
+        from src.evaluation.benchmark_assets import _select_answer_chunk
+
+        tiny = make_chunk(chunk_id="cell1", doc_id="semiconductor-doc1", text="0.00")
+        good = make_chunk(
+            chunk_id="good1",
+            doc_id="semiconductor-doc1",
+            text="锂盐均价15.76万元/吨，近两周下跌10.23%。",
+        )
+        selected = _select_answer_chunk([tiny, good], mode="numeric_fact")
+        self.assertEqual(selected["chunk_id"], "good1")
+
+    def test_built_gold_answers_are_free_of_analyst_junk(self) -> None:
+        chunks, manifest = build_test_corpus()
+        for industry in INDUSTRIES:
+            for ordinal in (1, 2):
+                doc_id = f"{industry}-doc{ordinal}"
+                chunks.append(
+                    make_chunk(
+                        chunk_id=f"{doc_id}-junk",
+                        doc_id=doc_id,
+                        text="分析师：张三 SAC 执业证书编号：S034 邮箱：zhangsan@broker.com.cn",
+                    )
+                )
+        rows = build_agent_seed_draft(retrieval_seed_rows=self.seed_rows, chunks=chunks, manifest=manifest)
+        for row in rows:
+            if row["must_abstain"]:
+                continue
+            self.assertNotIn("@", row["gold_answer"])
+            self.assertNotIn("证书编号", row["gold_answer"])
+            self.assertTrue(row["gold_answer"])
 
 
 class AgentSeedMaterializationTests(unittest.TestCase):

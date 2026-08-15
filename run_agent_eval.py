@@ -270,6 +270,7 @@ def _build_answerer(args: argparse.Namespace) -> Any:
         remote_model_name=args.llm_model,
         cache_dir=args.model_cache_dir.resolve(),
         device=args.device or "cuda",
+        temperature=0.0,  # deterministic eval (checklist §P3 reproducible benchmark)
     )
 
 

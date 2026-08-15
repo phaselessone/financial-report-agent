@@ -22,6 +22,18 @@ def make_synthesize(answerer, config: AgentConfig):
             return state
 
         retrieval_result = state.get("last_retrieval_result") or {"rerank_rows": [], "hybrid_rows": []}
+        if int(state.get("generation_count", 0)) > 0:
+            # Resynthesis after a verification retry: feed the answerer the
+            # evidence pooled across ALL retrieval rounds (top-5 by score),
+            # not just the latest round (checklist §P3 gate remediation).
+            pool = state.get("evidence_pool") or {}
+            if pool:
+                merged_rows = sorted(
+                    pool.values(),
+                    key=lambda row: float(row.get("score") or row.get("rerank_score") or -999.0),
+                    reverse=True,
+                )[:5]
+                retrieval_result = {**retrieval_result, "rerank_rows": merged_rows, "hybrid_rows": merged_rows}
         calls_before = len(getattr(answerer, "llm_calls", []))
 
         draft = answerer.answer(

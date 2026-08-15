@@ -25,18 +25,39 @@ def make_verify_answer(config: AgentConfig):
         support_validation = draft.get("support_validation") or {}
         supported = bool(support_validation.get("supported", False))
         abstained = bool(draft.get("abstained", False))
-        if abstained or supported:
+        if abstained:
+            # Retry policy (gate remediation): abstaining despite having seen
+            # evidence is worth one rewrite + re-retrieval attempt; without any
+            # evidence the abstention is final (P2 semantics preserved).
+            has_evidence = bool(state.get("evidence_pool"))
+            if (
+                has_evidence
+                and int(state.get("rewrite_count", 0)) < config.max_query_rewrites
+                and int(state.get("retrieval_count", 0)) < config.max_retrieval_rounds
+                and int(state.get("llm_call_count", 0)) < config.max_llm_calls
+            ):
+                state["missing_information"] = state.get("missing_information") or "abstained_despite_evidence"
+                state["unsupported_retry"] = True
+                return state  # rewrite_query
+            state["unsupported_retry"] = False
+            return state  # finalize
+        low_confidence = str(draft.get("confidence_label", "high") or "high").strip().lower() == "low"
+        if supported and not low_confidence:
+            state["unsupported_retry"] = False
             return state  # finalize
 
-        # Retry policy (gate remediation): an unsupported draft first tries to
-        # rewrite + re-retrieve fresher evidence; only when the retrieval budget
-        # is exhausted does it fall back to regenerating on the same evidence.
+        # Retry policy (gate remediation): an unsupported OR low-confidence draft
+        # first tries to rewrite + re-retrieve fresher evidence; only when the
+        # retrieval budget is exhausted does it fall back to regenerating on the
+        # same evidence.
         if (
             int(state.get("rewrite_count", 0)) < config.max_query_rewrites
             and int(state.get("retrieval_count", 0)) < config.max_retrieval_rounds
             and int(state.get("llm_call_count", 0)) < config.max_llm_calls
         ):
-            state["missing_information"] = state.get("missing_information") or "unsupported_answer"
+            state["missing_information"] = state.get("missing_information") or (
+                "unsupported_answer" if not supported else "low_confidence_answer"
+            )
             state["unsupported_retry"] = True
             return state  # rewrite_query
         state["unsupported_retry"] = False
@@ -44,7 +65,9 @@ def make_verify_answer(config: AgentConfig):
             int(state.get("generation_count", 0)) < config.max_generation_attempts
             and int(state.get("llm_call_count", 0)) < config.max_llm_calls
         ):
-            state["missing_information"] = state.get("missing_information") or "unsupported_answer"
+            state["missing_information"] = state.get("missing_information") or (
+                "unsupported_answer" if not supported else "low_confidence_answer"
+            )
             return state  # back to synthesize
         state["termination_reason"] = "max_generation_attempts"
         return state

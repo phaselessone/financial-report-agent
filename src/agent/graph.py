@@ -48,11 +48,11 @@ def build_agent_graph(runtime, answerer, llm, config: AgentConfig):
     def route_after_verify(state: dict[str, Any]) -> str:
         if state.get("termination_reason"):
             return "finalize"
+        if state.get("unsupported_retry"):
+            return "rewrite_query"  # verification retry: rewrite + re-retrieve
         draft = state.get("draft_answer") or {}
         if draft.get("abstained") or (draft.get("support_validation") or {}).get("supported", False):
             return "finalize"
-        if state.get("unsupported_retry"):
-            return "rewrite_query"  # verification retry: rewrite + re-retrieve
         return "synthesize"  # legacy regenerate-on-same-evidence retry
 
     graph = StateGraph(dict)

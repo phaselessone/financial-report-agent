@@ -412,8 +412,34 @@ def _answer_chunk_score(row: dict[str, Any], *, mode: str) -> float:
     return score
 
 
+def _answer_chunk_junk_penalty(raw_text: str) -> float:
+    """Penalize non-content chunks (analyst headers, cells, dates, disclaimers)."""
+    cleaned = _clean_answer_text(raw_text)
+    if not cleaned:
+        return 1e9
+    penalty = 0.0
+    lowered = cleaned.lower()
+    if any(marker in lowered for marker in ("@", "证书编号", "邮箱")) or "证券分析师" in cleaned or "分析师" in cleaned:
+        penalty += 20.0
+    for pattern in ("投资评级", "行业走势图", "公司代码", "优于大市", "风险提示", "表头", "行业研究·行业"):
+        if pattern in cleaned:
+            penalty += 10.0
+    normalized_len = len(normalize_for_match(cleaned))
+    if normalized_len < 8:
+        penalty += 30.0
+    if cleaned.startswith("\uf06e") and cleaned.rstrip().endswith(":"):
+        penalty += 10.0
+    if re.fullmatch(r"[\d\s年月日.\-:/]+", cleaned):
+        penalty += 30.0
+    return penalty
+
+
 def _select_answer_chunk(rows: list[dict[str, Any]], *, mode: str) -> dict[str, Any]:
-    ranked = sorted(rows, key=lambda row: _answer_chunk_score(row, mode=mode), reverse=True)
+    ranked = sorted(
+        rows,
+        key=lambda row: _answer_chunk_score(row, mode=mode) - _answer_chunk_junk_penalty(row.get("text", "")),
+        reverse=True,
+    )
     return ranked[0]
 
 
@@ -521,10 +547,26 @@ _AGENT_ABSTAIN_QUERY_TEMPLATES = {
     "liquor": "白酒行业2027年度销售回款总额是多少？",
 }
 
+# Decoy numbers embedded in numeric_missing queries: absent from the corpus,
+# so the deterministic grade flags numeric_missing on round 1 (recovery design).
+_AGENT_DECOY_NUMBERS = {
+    "semiconductor": "47.2%",
+    "new_energy": "53.6%",
+    "consumer": "61.4%",
+    "liquor": "39.8%",
+}
 
-def _weakened_comparison_query(industry: str) -> str:
-    del industry  # intentionally domain-free: first-round retrieval must miss the target docs
-    return "两份研报的关注重点有何不同？"
+
+def _anchored_comparison_query(first_doc: dict[str, Any]) -> str:
+    """Single-doc anchored comparison: round-1 retrieval pins on the first
+    report's title, so the deterministic grade fails with source_diversity_missing."""
+    return f"《{first_doc['short_title']}》与同行业其他研报的关注重点有何不同？"
+
+
+def _numeric_missing_query(industry: str, doc: dict[str, Any]) -> str:
+    focus_terms = (doc.get("fact_terms") or doc.get("title_terms") or [])[:3]
+    focus = "、".join(focus_terms) if focus_terms else (doc.get("title_topic") or doc["short_title"])
+    return f"报告中关于“{focus}”的关键数据从{_AGENT_DECOY_NUMBERS[industry]}变化到多少？"
 
 
 def _agent_row(
@@ -605,7 +647,8 @@ def build_agent_seed_draft(
         numerics = [row for row in group if row.get("intent") == "numeric_fact"]
         inductives = [row for row in group if row.get("intent") == "inductive"]
 
-        # agent_recovery: weakened comparison query (book titles removed), same dual-doc targets.
+        # agent_recovery: single-doc anchored comparison query (round-1 grade
+        # fails with source_diversity_missing), same dual-doc targets.
         recovery_seed = comparisons[1]
         recovery_docs = _agent_target_docs(manifest_by_key, recovery_seed)
         recovery_chunks = _agent_select_chunks(chunks_by_doc, recovery_docs, mode="summary")
@@ -613,7 +656,7 @@ def build_agent_seed_draft(
             _agent_row(
                 question_id=_agent_ordinal(industry, "agent_recovery"),
                 category="agent_recovery",
-                query=_weakened_comparison_query(industry),
+                query=_anchored_comparison_query(recovery_docs[0]),
                 question_type="comparison",
                 intent="comparison",
                 industry=industry,
@@ -622,8 +665,7 @@ def build_agent_seed_draft(
                 gold_answer=_comparison_gold_answer(recovery_docs[0], recovery_docs[1], recovery_chunks[0], recovery_chunks[1]),
                 must_recover=True,
                 expected_first_failure="source_diversity_missing",
-                review_notes="agent_recovery_weakened_comparison:dev",
-                domain_hint="",
+                review_notes="agent_recovery_anchored_comparison:dev",
             )
         )
 
@@ -665,7 +707,7 @@ def build_agent_seed_draft(
             )
         )
 
-        # agent_numeric_missing: original numeric_fact query.
+        # agent_numeric_missing: decoy-number query forces round-1 numeric_missing.
         numeric_seed = numerics[0]
         numeric_docs = _agent_target_docs(manifest_by_key, numeric_seed)
         numeric_chunks = _agent_select_chunks(chunks_by_doc, numeric_docs, mode="numeric_fact")
@@ -673,7 +715,7 @@ def build_agent_seed_draft(
             _agent_row(
                 question_id=_agent_ordinal(industry, "agent_numeric_missing"),
                 category="agent_numeric_missing",
-                query=numeric_seed["query"],
+                query=_numeric_missing_query(industry, numeric_docs[0]),
                 question_type="fact",
                 intent="numeric_fact",
                 industry=industry,
@@ -683,7 +725,7 @@ def build_agent_seed_draft(
                 or numeric_docs[0]["short_title"],
                 must_recover=True,
                 expected_first_failure="numeric_missing",
-                review_notes="agent_numeric_missing:dev",
+                review_notes="agent_numeric_missing_decoy:dev",
             )
         )
 

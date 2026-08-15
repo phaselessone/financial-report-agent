@@ -53,6 +53,9 @@ def make_rewrite_query(llm, config: AgentConfig):
             if evidence_lines
             else ""
         )
+        draft_answer = state.get("draft_answer") or {}
+        current_answer = str(draft_answer.get("final_answer", "") or "")[:200]
+        answer_block = f"Current draft answer: {current_answer}\n" if current_answer else ""
         user_prompt = (
             f"Original query: {state['query']}\n"
             f"Current query: {state['active_query']}\n"
@@ -60,6 +63,7 @@ def make_rewrite_query(llm, config: AgentConfig):
             f"Domain hint: {state.get('domain_hint', '') or state.get('query_domain_bucket', '')}\n"
             f"Missing information: {state.get('missing_information', '')}\n"
             f"Evidence chunks seen so far: {len(state.get('evidence_pool', {}))}\n"
+            f"{answer_block}"
             f"{evidence_block}"
         )
         response = llm.generate(

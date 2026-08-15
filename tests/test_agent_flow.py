@@ -307,6 +307,180 @@ class AgentFlowTests(unittest.TestCase):
         self.assertEqual(state["rewrite_count"], 1)
         self.assertEqual(state["generation_count"], 1)
 
+    def test_low_confidence_supported_draft_retries_with_rewrite(self) -> None:
+        # A supported-but-low-confidence draft (grade passed round 1, but the
+        # answerer is not confident) must trigger the rewrite + re-retrieve path.
+        first_evidence = make_result(
+            [
+                make_row(chunk_id="c1", doc_id="d1", text="A公司强调AI算力需求。"),
+                make_row(chunk_id="c3", doc_id="d2", text="B公司聚焦存储涨价。"),
+            ]
+        )
+        second_evidence = make_result(
+            [
+                make_row(chunk_id="c2", doc_id="d1", text="A公司强调AI算力需求。"),
+                make_row(chunk_id="c4", doc_id="d2", text="B公司聚焦存储涨价。"),
+            ]
+        )
+        runtime = FakeRuntime([first_evidence, second_evidence])
+        llm = FakeLLM([rewrite_response("A公司 B公司 策略 对比", "low_confidence_answer")])
+        low_confidence = supported_draft("第一次草稿")
+        low_confidence["confidence_label"] = "low"
+        confident = supported_draft("A公司强调AI算力，B公司聚焦存储。")
+        confident["confidence_label"] = "high"
+        answerer = FakeAnswerer([low_confidence, confident])
+        state = run_agentic_rag(
+            runtime=runtime,
+            answerer=answerer,
+            llm=llm,
+            config=AgentConfig(),
+            query="比较A公司和B公司的策略差异",
+        )
+        self.assertEqual(state["termination_reason"], "completed")
+        self.assertEqual(state["rewrite_count"], 1)
+        self.assertEqual(state["retrieval_count"], 2)
+        self.assertEqual(state["generation_count"], 2)
+        self.assertEqual(state["final_answer"]["final_answer"], "A公司强调AI算力，B公司聚焦存储。")
+
+    def test_high_confidence_supported_draft_finalizes_without_retry(self) -> None:
+        runtime = FakeRuntime([make_result([make_row(chunk_id="c1", doc_id="d1", text="半导体行业景气度持续回升。")])])
+        llm = FakeLLM([])
+        confident = supported_draft("半导体行业景气度持续回升。")
+        confident["confidence_label"] = "high"
+        answerer = FakeAnswerer([confident])
+        state = run_agentic_rag(
+            runtime=runtime,
+            answerer=answerer,
+            llm=llm,
+            config=AgentConfig(),
+            query="半导体行业景气度如何？",
+        )
+        self.assertEqual(state["termination_reason"], "completed")
+        self.assertEqual(state["rewrite_count"], 0)
+        self.assertEqual(state["retrieval_count"], 1)
+        self.assertEqual(state["generation_count"], 1)
+
+    def test_rewrite_prompt_carries_current_draft_answer(self) -> None:
+        first_evidence = make_result(
+            [
+                make_row(chunk_id="c1", doc_id="d1", text="A公司强调AI算力需求。"),
+                make_row(chunk_id="c3", doc_id="d2", text="B公司聚焦存储涨价。"),
+            ]
+        )
+        second_evidence = make_result(
+            [
+                make_row(chunk_id="c2", doc_id="d1", text="A公司强调AI算力需求。"),
+                make_row(chunk_id="c4", doc_id="d2", text="B公司聚焦存储涨价。"),
+            ]
+        )
+        runtime = FakeRuntime([first_evidence, second_evidence])
+        llm = FakeLLM([rewrite_response("A公司 B公司 策略 对比", "low_confidence_answer")])
+        low_confidence = supported_draft("第一次草稿")
+        low_confidence["confidence_label"] = "low"
+        confident = supported_draft("A公司强调AI算力，B公司聚焦存储。")
+        confident["confidence_label"] = "high"
+        answerer = FakeAnswerer([low_confidence, confident])
+        state = run_agentic_rag(
+            runtime=runtime,
+            answerer=answerer,
+            llm=llm,
+            config=AgentConfig(),
+            query="比较A公司和B公司的策略差异",
+        )
+        self.assertEqual(state["termination_reason"], "completed")
+        user_prompt = llm.calls[0]["messages"][1]["content"]
+        self.assertIn("Current draft answer: 第一次草稿", user_prompt)
+
+    def test_resynthesis_uses_pooled_evidence_from_all_rounds(self) -> None:
+        first_evidence = make_result(
+            [
+                make_row(chunk_id="c1", doc_id="d1", text="A公司强调AI算力需求。"),
+                make_row(chunk_id="c3", doc_id="d2", text="B公司聚焦存储涨价。"),
+            ]
+        )
+        second_evidence = make_result(
+            [
+                make_row(chunk_id="c2", doc_id="d1", text="A公司强调AI算力需求。"),
+                make_row(chunk_id="c4", doc_id="d2", text="B公司聚焦存储涨价。"),
+            ]
+        )
+        runtime = FakeRuntime([first_evidence, second_evidence])
+        llm = FakeLLM([rewrite_response("A公司 B公司 策略 对比", "source_diversity_missing")])
+        unsupported = supported_draft("第一次草稿")
+        unsupported["support_validation"] = {"supported": False}
+        answerer = FakeAnswerer([unsupported, supported_draft("A公司强调AI算力，B公司聚焦存储。")])
+        state = run_agentic_rag(
+            runtime=runtime,
+            answerer=answerer,
+            llm=llm,
+            config=AgentConfig(),
+            query="比较A公司和B公司的策略差异",
+        )
+        self.assertEqual(state["termination_reason"], "completed")
+        self.assertEqual(len(answerer.answer_calls), 2)
+        # The first synthesis uses only the current round; the resynthesis must
+        # receive evidence pooled across both rounds.
+        first_rows = {row["chunk_id"] for row in answerer.answer_calls[0]["retrieval_result"]["rerank_rows"]}
+        second_rows = {row["chunk_id"] for row in answerer.answer_calls[1]["retrieval_result"]["rerank_rows"]}
+        self.assertEqual(first_rows, {"c1", "c3"})
+        self.assertIn("c1", second_rows)
+        self.assertIn("c2", second_rows)
+
+    def test_abstained_draft_with_evidence_retries_with_rewrite(self) -> None:
+        # The answerer abstained although evidence was seen: retry with a rewrite
+        # instead of finalizing (bounded by the rewrite budget).
+        first_evidence = make_result(
+            [
+                make_row(chunk_id="c1", doc_id="d1", text="A公司强调AI算力需求。"),
+                make_row(chunk_id="c3", doc_id="d2", text="B公司聚焦存储涨价。"),
+            ]
+        )
+        second_evidence = make_result(
+            [
+                make_row(chunk_id="c2", doc_id="d1", text="A公司强调AI算力需求。"),
+                make_row(chunk_id="c4", doc_id="d2", text="B公司聚焦存储涨价。"),
+            ]
+        )
+        runtime = FakeRuntime([first_evidence, second_evidence])
+        llm = FakeLLM([rewrite_response("A公司 B公司 策略 对比", "abstained_despite_evidence")])
+        abstained = abstained_draft("insufficient_source_diversity")
+        confident = supported_draft("A公司强调AI算力，B公司聚焦存储。")
+        confident["confidence_label"] = "high"
+        answerer = FakeAnswerer([abstained, confident])
+        state = run_agentic_rag(
+            runtime=runtime,
+            answerer=answerer,
+            llm=llm,
+            config=AgentConfig(),
+            query="比较A公司和B公司的策略差异",
+        )
+        self.assertEqual(state["termination_reason"], "completed")
+        self.assertEqual(state["rewrite_count"], 1)
+        self.assertEqual(state["retrieval_count"], 2)
+        self.assertEqual(state["generation_count"], 2)
+        self.assertFalse(state["final_answer"]["abstained"])
+        self.assertEqual(state["final_answer"]["final_answer"], "A公司强调AI算力，B公司聚焦存储。")
+
+    def test_abstained_draft_without_evidence_finalizes_without_retry(self) -> None:
+        runtime = FakeRuntime([])  # always empty -> evidence pool stays empty
+        llm = FakeLLM(
+            [
+                rewrite_response("半导体 景气", "no_evidence"),
+                rewrite_response("半导体 行业 景气 回升", "no_evidence"),
+            ]
+        )
+        answerer = FakeAnswerer([abstained_draft("no_evidence")])
+        state = run_agentic_rag(
+            runtime=runtime,
+            answerer=answerer,
+            llm=llm,
+            config=AgentConfig(),
+            query="半导体行业景气度如何？",
+        )
+        self.assertTrue(state["final_answer"]["abstained"])
+        self.assertEqual(state["termination_reason"], "completed")
+        self.assertEqual(state["rewrite_count"], 1)
+
     def test_analyze_query_makes_no_llm_call(self) -> None:
         runtime = FakeRuntime([make_result([make_row(chunk_id="c1", doc_id="d1", text="半导体行业景气度持续回升。")])])
         llm = FakeLLM([])
