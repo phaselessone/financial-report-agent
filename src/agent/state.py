@@ -48,6 +48,7 @@ class AgentState(TypedDict, total=False):
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+    llm_calls_log: list[dict[str, Any]]
 
     # termination
     termination_reason: str
@@ -80,6 +81,7 @@ def new_agent_state(*, query: str, domain_hint: str = "", question_type: str = "
         prompt_tokens=0,
         completion_tokens=0,
         total_tokens=0,
+        llm_calls_log=[],
         termination_reason="",
         final_answer=None,
     )

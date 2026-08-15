@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -19,6 +19,7 @@ def _materialize_answer_eval_seed(
     chunks: list[dict[str, Any]],
     chunk_lookup: dict[str, dict[str, Any]],
     docs_by_key: dict[str, dict[str, Any]],
+    preserve_fields: tuple[str, ...] = (),
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     resolved_rows: list[dict[str, Any]] = []
     missing_rows: list[dict[str, Any]] = []
@@ -48,30 +49,32 @@ def _materialize_answer_eval_seed(
             continue
 
         gold_chunks = [chunk_lookup[chunk_id] for chunk_id in gold_chunk_ids]
-        resolved_rows.append(
-            {
-                "question_id": question_id,
-                "query": row["query"],
-                "question_type": row.get("question_type", "fact"),
-                "intent": row.get("intent", row.get("question_type", "fact")),
-                "industry": row.get("industry", "other"),
-                "gold_answer": row.get("gold_answer", ""),
-                "gold_doc_ids": [doc["doc_id"] for doc in target_docs if doc is not None],
-                "gold_page_nums": sorted(
-                    {
-                        page
-                        for chunk in gold_chunks
-                        for page in range(int(chunk["page_start"]), int(chunk["page_end"]) + 1)
-                    }
-                ),
-                "gold_chunk_ids": gold_chunk_ids,
-                "must_abstain": bool(row.get("must_abstain", False)),
-                "notes": row.get("review_notes", "curated_answer_seed"),
-                "target_doc_keys": target_doc_keys,
-                "target_titles": [doc["short_title"] for doc in target_docs if doc is not None],
-                "target_files": [doc["file_name"] for doc in target_docs if doc is not None],
-            }
-        )
+        resolved_row = {
+            "question_id": question_id,
+            "query": row["query"],
+            "question_type": row.get("question_type", "fact"),
+            "intent": row.get("intent", row.get("question_type", "fact")),
+            "industry": row.get("industry", "other"),
+            "gold_answer": row.get("gold_answer", ""),
+            "gold_doc_ids": [doc["doc_id"] for doc in target_docs if doc is not None],
+            "gold_page_nums": sorted(
+                {
+                    page
+                    for chunk in gold_chunks
+                    for page in range(int(chunk["page_start"]), int(chunk["page_end"]) + 1)
+                }
+            ),
+            "gold_chunk_ids": gold_chunk_ids,
+            "must_abstain": bool(row.get("must_abstain", False)),
+            "notes": row.get("review_notes", "curated_answer_seed"),
+            "target_doc_keys": target_doc_keys,
+            "target_titles": [doc["short_title"] for doc in target_docs if doc is not None],
+            "target_files": [doc["file_name"] for doc in target_docs if doc is not None],
+        }
+        for field in preserve_fields:
+            if field in row:
+                resolved_row[field] = row[field]
+        resolved_rows.append(resolved_row)
     return resolved_rows, missing_rows
 
 

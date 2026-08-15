@@ -98,12 +98,46 @@ def new_evidence_ids(*, seen_chunk_ids: set[str], rows: list[dict[str, Any]]) ->
     return [row["chunk_id"] for row in rows if row.get("chunk_id") not in seen_chunk_ids]
 
 
-def record_llm_response(state: dict[str, Any], response: LLMResponse) -> None:
-    """Accumulate LLM call/token counters from a single provider response."""
+def record_llm_response(state: dict[str, Any], response: LLMResponse, *, node: str = "") -> None:
+    """Accumulate LLM call/token counters from a single provider response.
+
+    Also appends a per-call entry to ``state["llm_calls_log"]`` (checklist §P3
+    per-query logs: API latency / retries / tokens per call). Counter semantics
+    are unchanged; the log is purely additive.
+    """
     state["llm_call_count"] = int(state.get("llm_call_count", 0)) + 1
     state["prompt_tokens"] = int(state.get("prompt_tokens", 0)) + response.prompt_tokens
     state["completion_tokens"] = int(state.get("completion_tokens", 0)) + response.completion_tokens
     state["total_tokens"] = int(state.get("total_tokens", 0)) + response.usage_total_tokens()
+    state.setdefault("llm_calls_log", []).append(
+        {
+            "step_count": int(state.get("step_count", 0)),
+            "node": node,
+            "provider": response.provider,
+            "model": response.model,
+            "prompt_tokens": response.prompt_tokens,
+            "completion_tokens": response.completion_tokens,
+            "total_tokens": response.usage_total_tokens(),
+            "latency_ms": response.latency_ms,
+            "retries": response.retries,
+            "request_id": response.request_id,
+            "finish_reason": response.finish_reason,
+        }
+    )
+
+
+def token_budget_exceeded(state: dict[str, Any], config: Any) -> bool:
+    """Token-level budget guard (config.max_total_tokens; 0 = disabled).
+
+    Returns True (with ``termination_reason="max_total_tokens"`` set) once the
+    accumulated total tokens meet the budget. Callers check this before making
+    a new LLM call.
+    """
+    budget = int(getattr(config, "max_total_tokens", 0) or 0)
+    if budget > 0 and int(state.get("total_tokens", 0)) >= budget:
+        state["termination_reason"] = "max_total_tokens"
+        return True
+    return False
 
 
 def begin_node(state: dict[str, Any], config: Any) -> bool:

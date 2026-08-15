@@ -500,3 +500,209 @@ def build_answer_seed_draft(
 def write_answer_seed_draft(draft_rows: list[dict[str, Any]], output_path: Path) -> None:
     write_jsonl(output_path, draft_rows)
 
+
+# ---------------------------------------------------------------------------
+# Agent benchmark seeds (checklist v3.0 §P3 benchmark categories)
+# ---------------------------------------------------------------------------
+
+AGENT_BENCHMARK_INDUSTRIES = ("semiconductor", "new_energy", "consumer", "liquor")
+
+_AGENT_CATEGORY_PREFIX = {
+    "agent_recovery": "rec",
+    "agent_multi_source": "ms",
+    "agent_numeric_missing": "num",
+    "agent_abstain": "abs",
+}
+
+_AGENT_ABSTAIN_QUERY_TEMPLATES = {
+    "semiconductor": "半导体行业2027年度资本开支总额是多少？",
+    "new_energy": "新能源行业2027年度锂电装机总量是多少？",
+    "consumer": "消费行业2027年度社会零售总额预测是多少？",
+    "liquor": "白酒行业2027年度销售回款总额是多少？",
+}
+
+
+def _weakened_comparison_query(industry: str) -> str:
+    return f"{industry_label(industry)}行业两份研报的关注重点有何不同？"
+
+
+def _agent_row(
+    *,
+    question_id: str,
+    category: str,
+    query: str,
+    question_type: str,
+    intent: str,
+    industry: str,
+    target_docs: list[dict[str, Any]],
+    gold_chunks: list[dict[str, Any]],
+    gold_answer: str,
+    must_abstain: bool = False,
+    must_recover: bool = False,
+    expected_first_failure: str = "",
+    review_notes: str,
+) -> dict[str, Any]:
+    return {
+        "question_id": question_id,
+        "category": category,
+        "query": query,
+        "question_type": question_type,
+        "intent": intent,
+        "industry": industry,
+        "target_doc_keys": [doc["doc_key"] for doc in target_docs],
+        "target_titles": [doc["short_title"] for doc in target_docs],
+        "gold_answer": gold_answer,
+        "gold_chunk_ids": [chunk["chunk_id"] for chunk in gold_chunks],
+        "candidate_snippets": [_clean_answer_fragment(chunk.get("text", ""), max_chars=108) for chunk in gold_chunks],
+        "must_abstain": must_abstain,
+        "must_recover": must_recover,
+        "expected_first_failure": expected_first_failure,
+        "review_notes": review_notes,
+    }
+
+
+def _agent_ordinal(industry: str, category: str) -> str:
+    return f"{industry}_{_AGENT_CATEGORY_PREFIX[category]}_01"
+
+
+def _agent_target_docs(manifest_by_key: dict[str, dict[str, Any]], seed_row: dict[str, Any]) -> list[dict[str, Any]]:
+    return [manifest_by_key[doc_key] for doc_key in seed_row.get("target_doc_keys", [])]
+
+
+def _agent_select_chunks(
+    chunks_by_doc: dict[str, list[dict[str, Any]]],
+    target_docs: list[dict[str, Any]],
+    *,
+    mode: str,
+) -> list[dict[str, Any]]:
+    return [_select_answer_chunk(chunks_by_doc[doc["doc_id"]], mode=mode) for doc in target_docs]
+
+
+def build_agent_seed_draft(
+    *,
+    retrieval_seed_rows: list[dict[str, Any]],
+    chunks: list[dict[str, Any]],
+    manifest: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Build the 4-category dev agent benchmark seed (20 rows) from retrieval seeds.
+
+    Categories (checklist v3.0 §P3): agent_recovery x4, agent_multi_source x8,
+    agent_numeric_missing x4, agent_abstain x4 (1 per industry each).
+    """
+    manifest_by_key = {row["doc_key"]: row for row in manifest}
+    chunks_by_doc: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for chunk in chunks:
+        chunks_by_doc[chunk["doc_id"]].append(chunk)
+
+    rows: list[dict[str, Any]] = []
+    for industry in AGENT_BENCHMARK_INDUSTRIES:
+        group = [row for row in retrieval_seed_rows if row.get("industry") == industry]
+        comparisons = [row for row in group if row.get("intent") == "comparison"]
+        numerics = [row for row in group if row.get("intent") == "numeric_fact"]
+        inductives = [row for row in group if row.get("intent") == "inductive"]
+
+        # agent_recovery: weakened comparison query (book titles removed), same dual-doc targets.
+        recovery_seed = comparisons[1]
+        recovery_docs = _agent_target_docs(manifest_by_key, recovery_seed)
+        recovery_chunks = _agent_select_chunks(chunks_by_doc, recovery_docs, mode="summary")
+        rows.append(
+            _agent_row(
+                question_id=_agent_ordinal(industry, "agent_recovery"),
+                category="agent_recovery",
+                query=_weakened_comparison_query(industry),
+                question_type="comparison",
+                intent="comparison",
+                industry=industry,
+                target_docs=recovery_docs,
+                gold_chunks=recovery_chunks,
+                gold_answer=_comparison_gold_answer(recovery_docs[0], recovery_docs[1], recovery_chunks[0], recovery_chunks[1]),
+                must_recover=True,
+                expected_first_failure="source_diversity_missing",
+                review_notes="agent_recovery_weakened_comparison:dev",
+            )
+        )
+
+        # agent_multi_source: one original comparison + one inductive per industry.
+        comparison_seed = comparisons[0]
+        comparison_docs = _agent_target_docs(manifest_by_key, comparison_seed)
+        comparison_chunks = _agent_select_chunks(chunks_by_doc, comparison_docs, mode="summary")
+        rows.append(
+            _agent_row(
+                question_id=f"{industry}_ms_comp_01",
+                category="agent_multi_source",
+                query=comparison_seed["query"],
+                question_type="comparison",
+                intent="comparison",
+                industry=industry,
+                target_docs=comparison_docs,
+                gold_chunks=comparison_chunks,
+                gold_answer=_comparison_gold_answer(
+                    comparison_docs[0], comparison_docs[1], comparison_chunks[0], comparison_chunks[1]
+                ),
+                review_notes="agent_multi_source_comparison:dev",
+            )
+        )
+        inductive_seed = inductives[0]
+        inductive_docs = _agent_target_docs(manifest_by_key, inductive_seed)
+        inductive_chunks = _agent_select_chunks(chunks_by_doc, inductive_docs, mode="summary")
+        rows.append(
+            _agent_row(
+                question_id=f"{industry}_ms_ind_01",
+                category="agent_multi_source",
+                query=inductive_seed["query"],
+                question_type="inductive",
+                intent="inductive",
+                industry=industry,
+                target_docs=inductive_docs,
+                gold_chunks=inductive_chunks,
+                gold_answer=_inductive_gold_answer(inductive_docs, inductive_chunks),
+                review_notes="agent_multi_source_inductive:dev",
+            )
+        )
+
+        # agent_numeric_missing: original numeric_fact query.
+        numeric_seed = numerics[0]
+        numeric_docs = _agent_target_docs(manifest_by_key, numeric_seed)
+        numeric_chunks = _agent_select_chunks(chunks_by_doc, numeric_docs, mode="numeric_fact")
+        rows.append(
+            _agent_row(
+                question_id=_agent_ordinal(industry, "agent_numeric_missing"),
+                category="agent_numeric_missing",
+                query=numeric_seed["query"],
+                question_type="fact",
+                intent="numeric_fact",
+                industry=industry,
+                target_docs=numeric_docs,
+                gold_chunks=numeric_chunks,
+                gold_answer=_clean_answer_fragment(numeric_chunks[0].get("text", ""), max_chars=108)
+                or numeric_docs[0]["short_title"],
+                must_recover=True,
+                expected_first_failure="numeric_missing",
+                review_notes="agent_numeric_missing:dev",
+            )
+        )
+
+        # agent_abstain: synthetic out-of-doc query, no gold targets.
+        rows.append(
+            _agent_row(
+                question_id=_agent_ordinal(industry, "agent_abstain"),
+                category="agent_abstain",
+                query=_AGENT_ABSTAIN_QUERY_TEMPLATES[industry],
+                question_type="fact",
+                intent="numeric_fact",
+                industry=industry,
+                target_docs=[],
+                gold_chunks=[],
+                gold_answer="",
+                must_abstain=True,
+                expected_first_failure="no_evidence",
+                review_notes="agent_abstain_synthetic:dev",
+            )
+        )
+
+    return rows
+
+
+def write_agent_seed_draft(draft_rows: list[dict[str, Any]], output_path: Path) -> None:
+    write_jsonl(output_path, draft_rows)
+

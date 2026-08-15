@@ -12,6 +12,7 @@ class AgentConfig:
     max_query_rewrites: int = 2
     max_generation_attempts: int = 2
     max_llm_calls: int = 6
+    max_total_tokens: int = 0  # 0 = token budget disabled (checklist §P3 API cost knob)
 
     # deterministic-only grading in v1 (checklist: prefer deterministic; API only when undecidable)
     grade_mode: str = "deterministic"

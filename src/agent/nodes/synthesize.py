@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.agent.config import AgentConfig
-from src.agent.policies import begin_node, record_llm_response
+from src.agent.policies import begin_node, record_llm_response, token_budget_exceeded
 
 
 def make_synthesize(answerer, config: AgentConfig):
@@ -17,6 +17,8 @@ def make_synthesize(answerer, config: AgentConfig):
             return state
         if int(state.get("llm_call_count", 0)) >= config.max_llm_calls:
             state["termination_reason"] = "max_llm_calls"
+            return state
+        if token_budget_exceeded(state, config):
             return state
 
         retrieval_result = state.get("last_retrieval_result") or {"rerank_rows": [], "hybrid_rows": []}
@@ -35,7 +37,7 @@ def make_synthesize(answerer, config: AgentConfig):
         # Account for every LLM call the AnswerService made under the hood.
         new_calls = list(getattr(answerer, "llm_calls", [])[calls_before:])
         for response in new_calls:
-            record_llm_response(state, response)
+            record_llm_response(state, response, node="synthesize")
         return state
 
     return synthesize

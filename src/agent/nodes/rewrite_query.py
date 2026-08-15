@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.agent.config import AgentConfig
-from src.agent.policies import begin_node, record_llm_response
+from src.agent.policies import begin_node, record_llm_response, token_budget_exceeded
 from src.generation.payload_parser import parse_model_json
 
 _REWRITE_SYSTEM_PROMPT = (
@@ -27,6 +27,8 @@ def make_rewrite_query(llm, config: AgentConfig):
         if int(state.get("llm_call_count", 0)) >= config.max_llm_calls:
             state["termination_reason"] = "max_llm_calls"
             return state
+        if token_budget_exceeded(state, config):
+            return state
 
         user_prompt = (
             f"Original query: {state['query']}\n"
@@ -42,7 +44,7 @@ def make_rewrite_query(llm, config: AgentConfig):
             temperature=config.rewrite_temperature,
             max_tokens=config.rewrite_max_tokens,
         )
-        record_llm_response(state, response)
+        record_llm_response(state, response, node="rewrite_query")
 
         payload = parse_model_json(response.content) or {}
         rewritten = str(payload.get("rewritten_query") or "").strip() or state["active_query"]
