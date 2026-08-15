@@ -1,0 +1,9 @@
+# Runtime profile: standard GPU
+# Both embedding and reranker run on CUDA.
+[embedding]
+device = "cuda"
+batch_size = 16
+
+[reranker]
+device = "cuda"
+batch_size = 8

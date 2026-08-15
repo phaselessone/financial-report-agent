@@ -4,11 +4,14 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
+import torch
+
 from src.retrieval.bm25_index import BM25Retriever, build_or_load_bm25_index
 from src.retrieval.embedder import DenseEmbedder, build_or_load_embeddings, resolve_device
 from src.retrieval.faiss_index import DenseRetriever, build_or_load_faiss_index
 from src.retrieval.hybrid_retriever import HybridRetriever
 from src.retrieval.reranker import CrossEncoderReranker
+from src.retrieval.runtime_profiles import resolve_runtime_settings
 from src.utils.io import ensure_dir
 from src.utils.text_utils import extract_terms, first_sentence, normalize_text
 
@@ -197,6 +200,9 @@ class RetrievalRuntime:
         }
 
 
+_CUDA_OOM_ERROR = getattr(torch.cuda, "OutOfMemoryError", ())
+
+
 def build_retrieval_runtime(
     *,
     chunks: list[dict[str, Any]],
@@ -204,28 +210,59 @@ def build_retrieval_runtime(
     model_cache_dir: Path,
     embedding_model: str,
     reranker_model: str,
-    device: str = "auto",
-    embedding_batch_size: int = 16,
-    rerank_batch_size: int = 8,
+    runtime_profile: str | None = None,
+    embedding_device: str | None = None,
+    reranker_device: str | None = None,
+    device: str | None = None,
+    embedding_batch_size: int | None = None,
+    rerank_batch_size: int | None = None,
     dense_top_k: int = 20,
     bm25_top_k: int = 20,
     rerank_top_k: int = 5,
     rerank_candidates_k: int | None = None,
     rebuild_indexes: bool = False,
 ) -> RetrievalRuntime:
+    """Build the retrieval runtime with independently configured devices.
+
+    ``embedding_device`` / ``reranker_device`` win over ``runtime_profile``,
+    environment variables and the legacy ``device`` alias (precedence: explicit
+    arguments > env > profile TOML > built-in defaults). See
+    :mod:`src.retrieval.runtime_profiles` for the resolution rules.
+    """
     chunk_lookup = {chunk["chunk_id"]: chunk for chunk in chunks}
     dense_output_dir = ensure_dir(output_dir / "indexes" / "dense")
     bm25_output_dir = ensure_dir(output_dir / "indexes" / "bm25")
 
-    resolved_device = resolve_device(device)
-    embedder = DenseEmbedder(embedding_model, cache_dir=model_cache_dir, device=resolved_device)
-    embeddings, chunk_ids = build_or_load_embeddings(
-        chunks=chunks,
-        embedder=embedder,
-        output_dir=dense_output_dir,
-        rebuild=rebuild_indexes,
-        batch_size=embedding_batch_size,
+    settings = resolve_runtime_settings(
+        profile=runtime_profile,
+        embedding_device=embedding_device,
+        reranker_device=reranker_device,
+        embedding_batch_size=embedding_batch_size,
+        reranker_batch_size=rerank_batch_size,
+        device=device,
     )
+    embedding_device_resolved = resolve_device(settings.embedding_device)
+    reranker_device_resolved = resolve_device(settings.reranker_device)
+
+    try:
+        embedder = DenseEmbedder(embedding_model, cache_dir=model_cache_dir, device=embedding_device_resolved)
+        embeddings, chunk_ids = build_or_load_embeddings(
+            chunks=chunks,
+            embedder=embedder,
+            output_dir=dense_output_dir,
+            rebuild=rebuild_indexes,
+            batch_size=settings.embedding_batch_size,
+        )
+    except Exception as exc:
+        if _CUDA_OOM_ERROR and isinstance(exc, _CUDA_OOM_ERROR):
+            raise RuntimeError(
+                "Embedding model ran out of GPU memory. "
+                "Lower EMBEDDING_BATCH_SIZE (try 4 -> 2 -> 1, e.g. --embedding-batch-size 2) "
+                "or switch the cpu runtime profile (--runtime-profile cpu). "
+                "The reranker intentionally stays on its configured device and is not auto-migrated."
+            ) from exc
+        raise
+
     dense_index = build_or_load_faiss_index(
         embeddings=embeddings,
         chunk_ids=chunk_ids,
@@ -238,7 +275,7 @@ def build_retrieval_runtime(
     bm25_retriever = BM25Retriever(bm25_index, chunk_lookup)
 
     hybrid_retriever = HybridRetriever(alpha=HYBRID_ALPHA, beta=HYBRID_BETA)
-    reranker = CrossEncoderReranker(reranker_model, cache_dir=model_cache_dir, device=resolved_device)
+    reranker = CrossEncoderReranker(reranker_model, cache_dir=model_cache_dir, device=reranker_device_resolved)
     return RetrievalRuntime(
         embedder=embedder,
         dense_retriever=dense_retriever,
@@ -249,5 +286,5 @@ def build_retrieval_runtime(
         bm25_top_k=bm25_top_k,
         rerank_top_k=rerank_top_k,
         rerank_candidates_k=rerank_candidates_k,
-        rerank_batch_size=rerank_batch_size,
+        rerank_batch_size=settings.reranker_batch_size,
     )

@@ -1,0 +1,9 @@
+# Runtime profile: CPU-only
+# Both embedding and reranker run on CPU.
+[embedding]
+device = "cpu"
+batch_size = 4
+
+[reranker]
+device = "cpu"
+batch_size = 2

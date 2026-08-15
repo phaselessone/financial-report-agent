@@ -1,0 +1,9 @@
+# Runtime profile: 4GB Low-VRAM (default)
+# BGE-M3 embedding on GPU, BGE reranker stays on CPU.
+[embedding]
+device = "cuda"
+batch_size = 4
+
+[reranker]
+device = "cpu"
+batch_size = 2

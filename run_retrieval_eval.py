@@ -23,9 +23,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-cache-dir", type=Path, default=Path("models"))
     parser.add_argument("--embedding-model", default="BAAI/bge-m3")
     parser.add_argument("--reranker-model", default="BAAI/bge-reranker-v2-m3")
-    parser.add_argument("--device", default="auto")
-    parser.add_argument("--embedding-batch-size", type=int, default=16)
-    parser.add_argument("--rerank-batch-size", type=int, default=8)
+    parser.add_argument("--runtime-profile", default=None, choices=("low_vram", "cpu", "standard_gpu"))
+    parser.add_argument("--embedding-device", default=None)
+    parser.add_argument("--reranker-device", default=None)
+    parser.add_argument("--device", default=None, help="Legacy alias: sets both embedding and reranker devices.")
+    parser.add_argument("--embedding-batch-size", type=int, default=None)
+    parser.add_argument("--rerank-batch-size", type=int, default=None)
     parser.add_argument("--dense-top-k", type=int, default=20)
     parser.add_argument("--bm25-top-k", type=int, default=20)
     parser.add_argument("--rerank-top-k", type=int, default=5)
@@ -77,6 +80,9 @@ def main() -> int:
         model_cache_dir=args.model_cache_dir.resolve(),
         embedding_model=args.embedding_model,
         reranker_model=args.reranker_model,
+        runtime_profile=args.runtime_profile,
+        embedding_device=args.embedding_device,
+        reranker_device=args.reranker_device,
         device=args.device,
         embedding_batch_size=args.embedding_batch_size,
         rerank_batch_size=args.rerank_batch_size,
