@@ -134,6 +134,84 @@ class BudgetAndTerminationTests(unittest.TestCase):
         self.assertEqual(state["generation_count"], 2)
         self.assertEqual(state["termination_reason"], "max_generation_attempts")
 
+    def test_llm_calls_log_records_each_call_with_node_metadata(self) -> None:
+        runtime = FakeRuntime(
+            [
+                make_result([]),
+                make_result([make_row(chunk_id="c1", doc_id="d1", text="半导体行业景气度持续回升。")]),
+            ]
+        )
+        llm = FakeLLM([rewrite_response("半导体 景气", "no_evidence", prompt=10, completion=5)])
+        answerer = FakeAnswerer([supported_draft("半导体行业景气度持续回升。")], llm_calls_per_answer=2)
+        state = run_agentic_rag(
+            runtime=runtime,
+            answerer=answerer,
+            llm=llm,
+            config=AgentConfig(),
+            query="半导体行业景气度如何？",
+        )
+        log = state["llm_calls_log"]
+        self.assertEqual(len(log), 3)
+        self.assertEqual([entry["node"] for entry in log], ["rewrite_query", "synthesize", "synthesize"])
+        for entry in log:
+            for key in (
+                "step_count",
+                "node",
+                "prompt_tokens",
+                "completion_tokens",
+                "total_tokens",
+                "latency_ms",
+                "retries",
+                "request_id",
+                "finish_reason",
+            ):
+                self.assertIn(key, entry)
+        self.assertEqual(sum(entry["prompt_tokens"] for entry in log), state["prompt_tokens"])
+        self.assertEqual(sum(entry["completion_tokens"] for entry in log), state["completion_tokens"])
+        self.assertEqual(sum(entry["total_tokens"] for entry in log), state["total_tokens"])
+        self.assertEqual(log[0]["prompt_tokens"], 10)
+        self.assertEqual(log[0]["completion_tokens"], 5)
+
+    def test_max_total_tokens_blocks_second_rewrite_before_call(self) -> None:
+        # Both rounds surface a single source: still insufficient for comparison,
+        # so a second rewrite would be attempted. The token budget consumed by the
+        # first rewrite (20 tokens vs budget 10) must block it before any call.
+        runtime = FakeRuntime(
+            [
+                make_result([make_row(chunk_id="c1", doc_id="d1", text="A公司强调AI算力需求。")]),
+                make_result([make_row(chunk_id="c2", doc_id="d1", text="A公司聚焦国产替代。")]),
+            ]
+        )
+        llm = FakeLLM([rewrite_response("A公司 B公司 策略", "source_diversity_missing", prompt=10, completion=10) for _ in range(10)])
+        answerer = FakeAnswerer([abstained_draft("max_total_tokens")])
+        state = run_agentic_rag(
+            runtime=runtime,
+            answerer=answerer,
+            llm=llm,
+            config=AgentConfig(max_total_tokens=10),
+            query="比较A公司和B公司的策略差异",
+        )
+        self.assertEqual(state["termination_reason"], "max_total_tokens")
+        self.assertEqual(state["llm_call_count"], 1)
+        self.assertEqual(len(llm.calls), 1)
+
+    def test_max_total_tokens_stops_synthesize_after_budget_consumed(self) -> None:
+        # Empty corpus: the rewrite consumes the budget (20 tokens vs budget 15),
+        # then synthesize must terminate without generating.
+        runtime = FakeRuntime([])
+        llm = FakeLLM([rewrite_response("q2", "no_evidence", prompt=10, completion=10) for _ in range(10)])
+        answerer = FakeAnswerer([abstained_draft("no_evidence")])
+        state = run_agentic_rag(
+            runtime=runtime,
+            answerer=answerer,
+            llm=llm,
+            config=AgentConfig(max_total_tokens=15),
+            query="半导体行业景气度如何？",
+        )
+        self.assertEqual(state["termination_reason"], "max_total_tokens")
+        self.assertEqual(state["llm_call_count"], 1)
+        self.assertEqual(state["generation_count"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
