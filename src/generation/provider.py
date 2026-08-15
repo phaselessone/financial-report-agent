@@ -57,6 +57,11 @@ class DeepSeekEvidenceAnswerer(LocalEvidenceAnswerer):
         self.max_retries = config.max_retries
         self.llm_calls: list[LLMResponse] = []
 
+    @property
+    def llm(self) -> LLMProvider:
+        """The underlying generic LLM provider (for agent orchestration)."""
+        return self._llm
+
     def _generate(self, prompt: str) -> str:
         messages = [
             {"role": "system", "content": "You are a financial research assistant. Answer with one JSON object only. Do not output markdown, code fences, or any extra text."},
