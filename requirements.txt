@@ -10,3 +10,4 @@ torch>=2.6,<3
 httpx>=0.27,<1
 langgraph>=1.0,<2
 typing-extensions>=4.8,<5
+duckdb>=1.1,<2
