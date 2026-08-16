@@ -66,6 +66,24 @@ GENERIC_QUERY_TERMS = {
 # 混合检索中稠密分数与 BM25 分数的加权系数。
 HYBRID_ALPHA = 0.6
 HYBRID_BETA = 0.4
+# 文档作用域检索的过取上限:在没有足够候选时也能覆盖目标文档。
+DOC_SCOPED_MAX_OVERFETCH = 200
+DOC_SCOPED_MIN_OVERFETCH = 8
+DOC_SCOPED_OVERFETCH_FACTOR = 8
+
+
+def filter_rows_by_doc_ids(rows: list[dict[str, Any]], doc_ids: set[str]) -> list[dict[str, Any]]:
+    """Keep only rows whose ``doc_id`` belongs to ``doc_ids``, preserving order."""
+    return [row for row in rows if row.get("doc_id") in doc_ids]
+
+
+def filter_retrieval_result(result: dict[str, Any], doc_ids: set[str]) -> dict[str, Any]:
+    """Return a copy of a search-result dict with every row list doc-filtered and ``"filtered": True`` set."""
+    filtered = dict(result)
+    for key in ("dense_rows", "bm25_rows", "hybrid_rows", "rerank_rows"):
+        filtered[key] = filter_rows_by_doc_ids(result.get(key, []), doc_ids)
+    filtered["filtered"] = True
+    return filtered
 
 
 class RetrievalRuntime:
@@ -161,16 +179,68 @@ class RetrievalRuntime:
             return non_noise_rows[: self.rerank_candidates_k]
         return hybrid_rows[: self.rerank_candidates_k]
 
-    def search(self, query: str) -> dict[str, Any]:
+    def search(self, query: str, *, doc_ids: set[str] | None = None) -> dict[str, Any]:
+        if doc_ids is None:
+            retrieval_start = perf_counter()
+            query_embedding = self.embedder.encode_query(query)
+            dense_rows_raw = self.dense_retriever.search(query_embedding, top_k=self.dense_top_k)
+            bm25_rows_raw = self.bm25_retriever.search(self._expanded_bm25_query(query), top_k=self.bm25_top_k)
+            hybrid_rows_raw = self.hybrid_retriever.search(
+                query=query,
+                dense_rows=dense_rows_raw,
+                bm25_rows=bm25_rows_raw,
+                top_k=max(self.dense_top_k, self.bm25_top_k),
+            )
+            dense_rows = self._expand_rows(dense_rows_raw)
+            bm25_rows = self._expand_rows(bm25_rows_raw)
+            hybrid_rows = self._expand_rows(hybrid_rows_raw)
+            retrieval_latency_ms = round((perf_counter() - retrieval_start) * 1000, 2)
+
+            rerank_start = perf_counter()
+            rerank_candidates = self._rerank_candidates(hybrid_rows)
+            rerank_rows = self.reranker.rerank(
+                query,
+                rerank_candidates,
+                top_k=self.rerank_top_k,
+                batch_size=self.rerank_batch_size,
+            )
+            rerank_latency_ms = round((perf_counter() - rerank_start) * 1000, 2)
+            return {
+                "query_mode": self._query_mode(query),
+                "numeric_query": self._is_numeric_query(query),
+                "dense_rows": dense_rows,
+                "bm25_rows": bm25_rows,
+                "hybrid_rows": hybrid_rows,
+                "rerank_rows": rerank_rows,
+                "timings": {
+                    "retrieval_latency_ms": retrieval_latency_ms,
+                    "rerank_latency_ms": rerank_latency_ms,
+                },
+            }
+
+        scope: set[str] = set(doc_ids)
+        overfetch = min(
+            DOC_SCOPED_MAX_OVERFETCH,
+            max(DOC_SCOPED_MIN_OVERFETCH, self.dense_top_k * DOC_SCOPED_OVERFETCH_FACTOR),
+        )
+        bm25_overfetch = min(
+            DOC_SCOPED_MAX_OVERFETCH,
+            max(DOC_SCOPED_MIN_OVERFETCH, self.bm25_top_k * DOC_SCOPED_OVERFETCH_FACTOR),
+        )
+
         retrieval_start = perf_counter()
         query_embedding = self.embedder.encode_query(query)
-        dense_rows_raw = self.dense_retriever.search(query_embedding, top_k=self.dense_top_k)
-        bm25_rows_raw = self.bm25_retriever.search(self._expanded_bm25_query(query), top_k=self.bm25_top_k)
+        dense_rows_raw = filter_rows_by_doc_ids(
+            self.dense_retriever.search(query_embedding, top_k=overfetch), scope
+        )
+        bm25_rows_raw = filter_rows_by_doc_ids(
+            self.bm25_retriever.search(self._expanded_bm25_query(query), top_k=bm25_overfetch), scope
+        )
         hybrid_rows_raw = self.hybrid_retriever.search(
             query=query,
             dense_rows=dense_rows_raw,
             bm25_rows=bm25_rows_raw,
-            top_k=max(self.dense_top_k, self.bm25_top_k),
+            top_k=max(overfetch, bm25_overfetch),
         )
         dense_rows = self._expand_rows(dense_rows_raw)
         bm25_rows = self._expand_rows(bm25_rows_raw)
@@ -189,6 +259,8 @@ class RetrievalRuntime:
         return {
             "query_mode": self._query_mode(query),
             "numeric_query": self._is_numeric_query(query),
+            "filtered": True,
+            "doc_ids": sorted(scope),
             "dense_rows": dense_rows,
             "bm25_rows": bm25_rows,
             "hybrid_rows": hybrid_rows,
