@@ -7,16 +7,20 @@ stays in RetrievalRuntime and LLM traffic stays in the provider layer.
 """
 
 from src.agent.nodes.analyze_query import make_analyze_query
+from src.agent.nodes.decompose_query import make_decompose_query
 from src.agent.nodes.finalize import make_finalize
 from src.agent.nodes.grade_evidence import make_grade_evidence
 from src.agent.nodes.retrieve import make_retrieve
+from src.agent.nodes.retrieve_subtasks import make_retrieve_subtasks
 from src.agent.nodes.rewrite_query import make_rewrite_query
 from src.agent.nodes.synthesize import make_synthesize
 from src.agent.nodes.verify_answer import make_verify_answer
 
 __all__ = [
     "make_analyze_query",
+    "make_decompose_query",
     "make_retrieve",
+    "make_retrieve_subtasks",
     "make_grade_evidence",
     "make_rewrite_query",
     "make_synthesize",

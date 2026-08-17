@@ -223,6 +223,56 @@ def infer_fact_subtype(query: str, answer_mode: str) -> str:
     return "semantic_fact"
 
 
+_MULTI_HOP_METRIC_HINTS = (
+    "营业收入",
+    "营收",
+    "净利润",
+    "毛利率",
+    "研发费用",
+    "经营性现金流",
+    "归母",
+)
+
+_MULTI_HOP_OPINION_HINTS = (
+    "怎么看",
+    "如何看",
+    "观点",
+    "看好",
+    "认为",
+    "展望",
+    "逻辑",
+    "成长性",
+    "前景",
+    "目标价",
+    "评级",
+    "机构看法",
+)
+
+
+def is_multi_hop_query(
+    query: str,
+    *,
+    question_type: str = "",
+    answer_mode: str = "",
+    fact_subtype: str = "",
+) -> bool:
+    """Deterministic multi-hop trigger (checklist v3.0 §P6, no LLM).
+
+    Multi-hop only for fact-type queries that mix a numeric/metric anchor with
+    an opinion/outlook question — a shape the single-hop fact path cannot answer
+    in one retrieval. Comparison and inductive queries stay on the existing
+    single-hop path (they already have grade/rewrite recovery; §P3 gate).
+    """
+    del answer_mode, fact_subtype  # reserved for future refinement
+    resolved_type = question_type or infer_question_type(query)
+    if resolved_type != "fact":
+        return False
+    normalized = normalize_text(query)
+    has_metric = any(hint in normalized for hint in _MULTI_HOP_METRIC_HINTS)
+    has_opinion = any(hint in normalized for hint in _MULTI_HOP_OPINION_HINTS)
+    return has_metric and has_opinion
+
+
 def is_numeric_or_table_query(query: str) -> bool:
     normalized = normalize_text(query)
     return any(keyword in normalized for keyword in NUMERIC_QUERY_HINTS) or any(char.isdigit() for char in normalized)

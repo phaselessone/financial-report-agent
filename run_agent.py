@@ -31,6 +31,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default=None, help="Legacy alias: sets both retrieval devices.")
     parser.add_argument("--llm-provider", default="")
     parser.add_argument("--llm-model", default="")
+    parser.add_argument("--facts-path", type=Path, default=Path("data/structured/facts_dev.jsonl"))
+    parser.add_argument("--company-aliases-path", type=Path, default=Path("data/structured/company_aliases.json"))
     parser.add_argument("--max-steps", type=int, default=12)
     parser.add_argument("--max-retrieval-rounds", type=int, default=3)
     parser.add_argument("--max-query-rewrites", type=int, default=2)
@@ -43,6 +45,7 @@ def main() -> int:
     args = parse_args()
     from src.generation.provider import build_generation_answerer
     from src.retrieval.runtime import build_retrieval_runtime
+    from src.structured.agent_bridge import load_structured_context
     from src.utils.io import read_jsonl
 
     chunks = read_jsonl(args.chunks_path.resolve())
@@ -71,6 +74,7 @@ def main() -> int:
         max_generation_attempts=args.max_generation_attempts,
         max_llm_calls=args.max_llm_calls,
     )
+    fact_store, company_aliases = load_structured_context(args.facts_path, args.company_aliases_path)
     final_state = run_agentic_rag(
         runtime=runtime,
         answerer=answerer,
@@ -79,6 +83,8 @@ def main() -> int:
         query=args.query,
         domain_hint=args.domain_hint,
         question_type=args.question_type,
+        fact_store=fact_store,
+        company_aliases=company_aliases,
     )
     print(
         json.dumps(

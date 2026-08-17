@@ -38,6 +38,12 @@ class AgentState(TypedDict, total=False):
     missing_reason_history: list[str]
     unsupported_retry: bool
 
+    # multi-hop (P6)
+    is_multi_hop: bool
+    sub_questions: list[dict[str, Any]]  # [{"id": "q1", "query": "...", "required_fields": []}]
+    sub_question_results: list[dict[str, Any]]
+    structured_facts: list[dict[str, Any]]
+
     # generation
     draft_answer: dict[str, Any] | None
     support_validation: dict[str, Any] | None
@@ -77,6 +83,10 @@ def new_agent_state(*, query: str, domain_hint: str = "", question_type: str = "
         failed_rewrite_rounds=0,
         missing_reason_history=[],
         unsupported_retry=False,
+        is_multi_hop=False,
+        sub_questions=[],
+        sub_question_results=[],
+        structured_facts=[],
         draft_answer=None,
         support_validation=None,
         step_count=0,

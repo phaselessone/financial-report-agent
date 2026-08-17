@@ -10,6 +10,7 @@ from src.generation.routing import (
     infer_answer_mode,
     infer_fact_subtype,
     infer_question_type,
+    is_multi_hop_query,
     is_numeric_or_table_query,
     resolve_query_domain_buckets,
 )
@@ -32,6 +33,7 @@ def make_analyze_query(config: AgentConfig):
                 "numeric_query": is_numeric_or_table_query(query),
                 "query_domain_buckets": domain_buckets,
                 "query_domain_bucket": domain_buckets[0] if domain_buckets else "",
+                "is_multi_hop": is_multi_hop_query(query, question_type=question_type, answer_mode=answer_mode, fact_subtype=fact_subtype),
             }
         )
         return state

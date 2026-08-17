@@ -74,6 +74,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rebuild-indexes", action="store_true")
     parser.add_argument("--llm-provider", default="")
     parser.add_argument("--llm-model", default="")
+    parser.add_argument("--facts-path", type=Path, default=Path("data/structured/facts_dev.jsonl"))
+    parser.add_argument("--company-aliases-path", type=Path, default=Path("data/structured/company_aliases.json"))
     parser.add_argument("--max-steps", type=int, default=12)
     parser.add_argument("--max-retrieval-rounds", type=int, default=3)
     parser.add_argument("--max-query-rewrites", type=int, default=2)
@@ -130,6 +132,8 @@ def run_agentic_eval_rows(
     answerer: Any,
     llm: Any,
     config: AgentConfig,
+    fact_store: Any = None,
+    company_aliases: dict[str, list[str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Run the agentic pipeline per benchmark row; failures become failed trace rows."""
     trace_rows: list[dict[str, Any]] = []
@@ -145,6 +149,8 @@ def run_agentic_eval_rows(
                 query=eval_row["query"],
                 domain_hint=str(eval_row.get("domain_hint", eval_row.get("industry", "")) or ""),
                 question_type=str(eval_row.get("question_type", "") or ""),
+                fact_store=fact_store,
+                company_aliases=company_aliases,
             )
             trace_rows.append(
                 build_agent_trace_row(state, eval_row, end_to_end_latency_ms=(perf_counter() - start) * 1000)
@@ -369,12 +375,17 @@ def main() -> int:
         if llm is None:
             raise ValueError("agentic mode requires a remote LLM answerer exposing the generic `llm` provider.")
         config = build_agent_config(args)
+        from src.structured.agent_bridge import load_structured_context
+
+        fact_store, company_aliases = load_structured_context(args.facts_path, args.company_aliases_path)
         trace_rows = run_agentic_eval_rows(
             eval_rows=eval_rows,
             runtime=runtime,
             answerer=answerer,
             llm=llm,
             config=config,
+            fact_store=fact_store,
+            company_aliases=company_aliases,
         )
         write_jsonl(paths["agent_eval_results"], trace_rows)
         write_jsonl(paths["agent_traces"], trace_rows)

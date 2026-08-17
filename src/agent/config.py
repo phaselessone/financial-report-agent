@@ -18,6 +18,8 @@ class AgentConfig:
     # abstain when a post-rewrite grading round is still insufficient this many
     # times in a row (checklist §P3 gate remediation R1: termination policy)
     max_failed_rewrite_rounds: int = 0
+    # P6: hard cap on sub-questions a multi-hop query may decompose into.
+    max_sub_questions: int = 6
 
     # deterministic-only grading in v1 (checklist: prefer deterministic; API only when undecidable)
     grade_mode: str = "deterministic"
