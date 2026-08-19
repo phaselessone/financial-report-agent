@@ -79,21 +79,11 @@ def make_retrieve_subtasks(runtime, fact_store, company_aliases, config: AgentCo
                 )
             else:
                 # RAG fallback: exactly one retrieval round, no rewrite.
-                # Honour the global max_retrieval_rounds budget — multi-hop
-                # costs decompose(1) + synthesize(≤2) ≤ 3 LLM calls and the
-                # P6 plan does not raise max_retrieval_rounds. When the cap
-                # is hit, skip remaining RAG sub-questions so retrieval_count
-                # never silently exceeds max_retrieval_rounds (handoff #3).
-                if int(state.get("retrieval_count", 0)) >= int(config.max_retrieval_rounds):
-                    state.setdefault("sub_question_results", []).append(
-                        {
-                            "id": sub_id,
-                            "query": query,
-                            "source": "skipped_budget",
-                            "row_count": 0,
-                        }
-                    )
-                    continue
+                # Bounded by max_sub_questions (one search per sub-question),
+                # NOT by max_retrieval_rounds — per P6 plan §1 that budget
+                # constrains only the single-hop rewrite loop. Skipping RAG
+                # sub-questions here would silently drop part of a decomposed
+                # query (code-review P1).
                 result = runtime.search(query)
                 result = apply_retrieval_domain_priority(result, domain_hint)
                 state["retrieval_count"] = int(state.get("retrieval_count", 0)) + 1

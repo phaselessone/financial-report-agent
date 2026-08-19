@@ -193,13 +193,13 @@ class MultiHopFlowTests(unittest.TestCase):
         self.assertFalse(state["is_multi_hop"])
         self.assertEqual(state["sub_questions"], [])
 
-    def test_retrieval_budget_caps_rag_subquestions(self) -> None:
-        # When sub-questions exceed max_retrieval_rounds, retrieve_subtasks
-        # must skip the surplus RAG sub-questions and never let
-        # retrieval_count exceed the configured cap (handoff #3: budgets
-        # untouched). Surplus sub-questions are recorded with
-        # source='skipped_budget'.
-        config = AgentConfig()  # max_retrieval_rounds=3 default
+    def test_all_rag_subquestions_are_retrieved(self) -> None:
+        # Every RAG sub-question gets exactly one retrieval. The multi-hop
+        # path is bounded by max_sub_questions, NOT by max_retrieval_rounds —
+        # P6 plan §1 reserves that cap for the single-hop rewrite loop, so
+        # surplus RAG sub-questions must never be silently dropped
+        # (code-review P1). With 5 RAG sub-questions we expect 5 searches.
+        config = AgentConfig()  # max_retrieval_rounds=3 default — not applied here
         runtime = FakeRuntime(
             [
                 make_result([make_row(chunk_id=f"c{i}", doc_id=f"d{i}", text=f"r{i}")])
@@ -227,12 +227,13 @@ class MultiHopFlowTests(unittest.TestCase):
             config=config,
             query=MULTI_HOP_QUERY,
         )
-        self.assertEqual(state["retrieval_count"], config.max_retrieval_rounds)
-        self.assertEqual(len(runtime.calls), config.max_retrieval_rounds)
+        self.assertGreater(len(state["sub_questions"]), config.max_retrieval_rounds)
+        self.assertEqual(state["retrieval_count"], len(state["sub_questions"]))
+        self.assertEqual(len(runtime.calls), len(state["sub_questions"]))
         skipped = [
             result for result in state["sub_question_results"] if result.get("source") == "skipped_budget"
         ]
-        self.assertEqual(len(skipped), 2)
+        self.assertEqual(len(skipped), 0)
 
     def test_multi_hop_abstains_without_rewrite_loop(self) -> None:
         runtime = FakeRuntime([make_result([make_row(chunk_id="c1", doc_id="d1", text="某观点。")])])
