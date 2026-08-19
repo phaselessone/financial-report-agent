@@ -10,13 +10,27 @@ claims, not a human-annotated gold set (honest scope, see src/evaluation/claim_e
 
 Usage:
   OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 \
-    python run_claim_eval.py --queries data/eval_set/answer_eval_seed_dev.jsonl \
+    python run_claim_eval.py --queries data/eval_set/agent_eval_seed_dev.jsonl \
       --runtime-profile cpu --eval-limit 5
 """
 
 from __future__ import annotations
 
-from src.utils.env import load_env_files
+import os
+
+# Same thread/offline recipe as the P6 smoke script: the bge-m3 embedder and the
+# reranker cannot both load at full threads on this box (handoff P4 §4), and
+# offline mode forces the local snapshot so no network download races the load.
+os.environ.setdefault("MODEL_OFFLINE", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "2")
+os.environ.setdefault("MKL_NUM_THREADS", "2")
+
+import torch  # noqa: E402
+
+torch.set_num_threads(2)
+
+from src.utils.env import load_env_files  # noqa: E402
 
 load_env_files()
 
