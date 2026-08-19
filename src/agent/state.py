@@ -48,6 +48,9 @@ class AgentState(TypedDict, total=False):
     draft_answer: dict[str, Any] | None
     support_validation: dict[str, Any] | None
 
+    # claim-level provenance (P7)
+    claims: list[dict[str, Any]]  # [{"claim_id", "text", "claim_type", "evidence_ids", "calculation_id", "parent_claim_ids", "supported"}]
+
     # budgets / counters
     step_count: int
     retrieval_count: int
@@ -89,6 +92,7 @@ def new_agent_state(*, query: str, domain_hint: str = "", question_type: str = "
         structured_facts=[],
         draft_answer=None,
         support_validation=None,
+        claims=[],
         step_count=0,
         retrieval_count=0,
         rewrite_count=0,

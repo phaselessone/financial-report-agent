@@ -20,6 +20,8 @@ class AgentConfig:
     max_failed_rewrite_rounds: int = 0
     # P6: hard cap on sub-questions a multi-hop query may decompose into.
     max_sub_questions: int = 6
+    # P7: max tokens for the claim-extraction LLM call (one per non-abstained draft).
+    claim_max_tokens: int = 512
 
     # deterministic-only grading in v1 (checklist: prefer deterministic; API only when undecidable)
     grade_mode: str = "deterministic"

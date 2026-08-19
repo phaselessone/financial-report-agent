@@ -28,6 +28,33 @@ def make_row(*, chunk_id: str, doc_id: str, text: str) -> dict:
     }
 
 
+def llm_call_kinds(llm) -> list[str]:
+    """Tag each captured LLM call by the node that made it.
+
+    P7 adds a per-draft ``extract_claims`` call between synthesis and
+    verification, so existing tests that asserted on absolute ``len(llm.calls)``
+    or ``llm.calls[0]`` are now polluted by that fixed extra call. This helper
+    lets those assertions stay meaningful by filtering for the node they care
+    about (rewrite / decompose) instead of absolute counts or indices.
+    """
+    kinds: list[str] = []
+    for call in llm.calls:
+        texts = " ".join(
+            str(message.get("content", ""))
+            for message in call.get("messages", [])
+            if isinstance(message, dict)
+        )
+        if "query decomposer" in texts:
+            kinds.append("decompose")
+        elif "claim extractor" in texts:
+            kinds.append("extract_claims")
+        elif "Current draft answer" in texts or "rewritten" in texts:
+            kinds.append("rewrite")
+        else:
+            kinds.append("other")
+    return kinds
+
+
 def make_result(rows: list[dict]) -> dict:
     return {
         "query_mode": "fact",
@@ -138,7 +165,10 @@ class AgentFlowTests(unittest.TestCase):
         self.assertEqual(state["retrieval_count"], 1)
         self.assertEqual(state["rewrite_count"], 0)
         self.assertEqual(state["generation_count"], 1)
-        self.assertEqual(len(llm.calls), 0)
+        # P7: a per-draft claim-extraction call happens, but no rewrite/decompose.
+        kinds = llm_call_kinds(llm)
+        self.assertNotIn("rewrite", kinds)
+        self.assertNotIn("decompose", kinds)
         self.assertEqual(state["final_answer"]["final_answer"], "半导体行业景气度持续回升。")
 
     def test_failed_retrieval_rewrites_then_recovers(self) -> None:
@@ -388,7 +418,10 @@ class AgentFlowTests(unittest.TestCase):
             query="比较A公司和B公司的策略差异",
         )
         self.assertEqual(state["termination_reason"], "completed")
-        user_prompt = llm.calls[0]["messages"][1]["content"]
+        # P7: extract_claims now runs before verify->rewrite, so rewrite is not
+        # necessarily calls[0]; find it by node kind and check its user prompt.
+        rewrite_idx = [i for i, k in enumerate(llm_call_kinds(llm)) if k == "rewrite"][0]
+        user_prompt = llm.calls[rewrite_idx]["messages"][1]["content"]
         self.assertIn("Current draft answer: 第一次草稿", user_prompt)
 
     def test_resynthesis_uses_pooled_evidence_from_all_rounds(self) -> None:
@@ -492,7 +525,7 @@ class AgentFlowTests(unittest.TestCase):
             config=AgentConfig(),
             query="半导体行业现状分析",
         )
-        self.assertEqual(len(llm.calls), 0)
+        self.assertEqual(len([k for k in llm_call_kinds(llm) if k == "rewrite"]), 0)
         self.assertEqual(state["question_type"], "fact")
         self.assertIn(state["answer_mode"], ("fact", "numeric_fact"))
 

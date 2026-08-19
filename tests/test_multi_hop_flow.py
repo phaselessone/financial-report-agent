@@ -22,6 +22,7 @@ from tests.test_agent_flow import (
     FakeLLM,
     FakeRuntime,
     abstained_draft,
+    llm_call_kinds,
     make_result,
     make_row,
     supported_draft,
@@ -70,7 +71,9 @@ class MultiHopFlowTests(unittest.TestCase):
         self.assertTrue(state["is_multi_hop"])
         self.assertEqual(len(state["sub_questions"]), 2)
         self.assertEqual(state["retrieval_count"], 2)
-        self.assertEqual(len(llm.calls), 1)  # decompose only, no rewrite
+        kinds = llm_call_kinds(llm)
+        self.assertIn("decompose", kinds)   # multi-hop decomposed once
+        self.assertNotIn("rewrite", kinds)  # and never rewrote
         self.assertEqual(state["rewrite_count"], 0)
         self.assertEqual(state["termination_reason"], "completed")
         self.assertEqual(state["final_answer"]["final_answer"], "宁德时代2025年营收1234亿元，机构看好其增长逻辑。")
@@ -89,7 +92,9 @@ class MultiHopFlowTests(unittest.TestCase):
             query="半导体行业景气度如何？",
         )
         self.assertFalse(state["is_multi_hop"])
-        self.assertEqual(len(llm.calls), 0)  # no decompose, no rewrite
+        kinds = llm_call_kinds(llm)
+        self.assertNotIn("decompose", kinds)  # single-hop: never decomposed
+        self.assertNotIn("rewrite", kinds)    # and never rewrote
         self.assertEqual(state["retrieval_count"], 1)
         self.assertEqual(state["termination_reason"], "completed")
 

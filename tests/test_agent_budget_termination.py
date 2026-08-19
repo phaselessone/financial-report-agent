@@ -12,6 +12,7 @@ from tests.test_agent_flow import (
     FakeLLM,
     FakeRuntime,
     abstained_draft,
+    llm_call_kinds,
     make_result,
     make_row,
     rewrite_response,
@@ -66,7 +67,8 @@ class BudgetAndTerminationTests(unittest.TestCase):
         self.assertTrue(state["no_improvement"])
         self.assertEqual(state["retrieval_count"], 2)
         self.assertEqual(state["rewrite_count"], 1)
-        self.assertEqual(len(llm.calls), 1)  # no further rewrites
+        # P7: exactly one rewrite call; the fixed claim-extraction call is ignored.
+        self.assertEqual(len([k for k in llm_call_kinds(llm) if k == "rewrite"]), 1)
         self.assertEqual(state["termination_reason"], "completed")
 
     def test_token_accounting_accumulates_rewrite_and_generation(self) -> None:
@@ -85,8 +87,10 @@ class BudgetAndTerminationTests(unittest.TestCase):
             config=AgentConfig(),
             query="半导体行业景气度如何？",
         )
-        # 1 rewrite (10+5) + 2 answerer calls (20+10 each)
-        self.assertEqual(state["llm_call_count"], 3)
+        # 1 rewrite (10+5) + 2 answerer calls (20+10 each) + extract_claims.
+        # The extract_claims call exhausts the FakeLLM's single rewrite response,
+        # so it books 0 tokens but still counts as one LLM call (P7).
+        self.assertEqual(state["llm_call_count"], 4)
         self.assertEqual(state["prompt_tokens"], 10 + 2 * 20)
         self.assertEqual(state["completion_tokens"], 5 + 2 * 10)
         self.assertEqual(state["total_tokens"], 15 + 2 * 30)
@@ -211,8 +215,12 @@ class BudgetAndTerminationTests(unittest.TestCase):
             query="半导体行业景气度如何？",
         )
         log = state["llm_calls_log"]
-        self.assertEqual(len(log), 3)
-        self.assertEqual([entry["node"] for entry in log], ["rewrite_query", "synthesize", "synthesize"])
+        # P7: extract_claims adds one entry after synthesis.
+        self.assertEqual(len(log), 4)
+        self.assertEqual(
+            [entry["node"] for entry in log],
+            ["rewrite_query", "synthesize", "synthesize", "extract_claims"],
+        )
         for entry in log:
             for key in (
                 "step_count",

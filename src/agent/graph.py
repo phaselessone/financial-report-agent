@@ -16,6 +16,7 @@ from langgraph.graph import END, StateGraph
 from src.agent.config import AgentConfig
 from src.agent.nodes.analyze_query import make_analyze_query
 from src.agent.nodes.decompose_query import make_decompose_query
+from src.agent.nodes.extract_claims import make_extract_claims
 from src.agent.nodes.finalize import make_finalize
 from src.agent.nodes.grade_evidence import make_grade_evidence
 from src.agent.nodes.retrieve import make_retrieve
@@ -52,7 +53,7 @@ def build_agent_graph(runtime, answerer, llm, config: AgentConfig, *, fact_store
     def route_after_synthesize(state: dict[str, Any]) -> str:
         if state.get("termination_reason"):
             return "finalize"
-        return "verify_answer"
+        return "extract_claims"
 
     def route_after_verify(state: dict[str, Any]) -> str:
         if state.get("termination_reason"):
@@ -76,6 +77,7 @@ def build_agent_graph(runtime, answerer, llm, config: AgentConfig, *, fact_store
     graph.add_node("grade_evidence", make_grade_evidence(config))
     graph.add_node("rewrite_query", make_rewrite_query(llm, config))
     graph.add_node("synthesize", make_synthesize(answerer, config))
+    graph.add_node("extract_claims", make_extract_claims(llm, config))
     graph.add_node("verify_answer", make_verify_answer(config))
     graph.add_node("finalize", make_finalize())
 
@@ -97,8 +99,9 @@ def build_agent_graph(runtime, answerer, llm, config: AgentConfig, *, fact_store
     graph.add_conditional_edges(
         "synthesize",
         route_after_synthesize,
-        {"verify_answer": "verify_answer", "finalize": "finalize"},
+        {"extract_claims": "extract_claims", "finalize": "finalize"},
     )
+    graph.add_edge("extract_claims", "verify_answer")
     graph.add_conditional_edges(
         "verify_answer",
         route_after_verify,
