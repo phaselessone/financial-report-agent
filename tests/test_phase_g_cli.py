@@ -511,7 +511,7 @@ def test_technical_overview_separates_current_acceptance_from_historical_snapsho
         encoding="utf-8"
     )
 
-    assert "当前验收状态（2026-08-24）" in overview
+    assert "## 0. 当前验收状态（" in overview
     assert "Phase 0 readiness: `BLOCKED`" in overview
     assert "strict eval bundle" in overview
     assert "历史快照（非当前验收）" in overview
