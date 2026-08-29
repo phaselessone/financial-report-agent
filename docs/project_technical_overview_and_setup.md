@@ -23,12 +23,14 @@
   `REAL_CORPUS_DEV_CONTRACT_ONLY`、`publishable=false`；旧
   `agent_traces_dev.jsonl` 保留为 BLOCKED migration fixture。
 - `.github/workflows/ci.yml` 是 Ubuntu/Windows CPU-only 的可复现工作流合同；
-  目前没有可作为终验依据的 hosted GitHub Actions 成功记录。
+  push run [`33259417431`](https://github.com/phaselessone/financial-report-agent/actions/runs/33259417431)
+  已在提交 `48945449f0f36ae3c0ffb6590ab92f8087b5769e` 上通过 Ubuntu 与 Windows
+  两个矩阵作业。
 - 一个不含 `data/` 和 human attestation 的 263-file clean-checkout 本地快照已通过
   compile、Ruff、`uv pip check`、59 项 RunIdentity/eval 回归、31 项
   evidence/Phase-G 回归、1009 项 public suite、strict READY、balanced hard-case
-  subset、四 profile synthetic contract 和 Phase 0 的 200 项 smoke；这仍是本地
-  模拟，不是 hosted CI 成功记录。
+  subset、四 profile synthetic contract 和 Phase 0 的 200 项 smoke；该本地证据
+  现已有上述 hosted Ubuntu/Windows green 交叉验证。
 - `make four-profile-contract` 会在无 provider、无网络、无模型下载的条件下真实执行
   100 条 synthetic contract × 四个 profile，生成四个独立 bundle。该结果永久为
   `SYNTHETIC_CONTRACT_ONLY`；三条 graph-backed profile 必须通过 evidence-integrity，
@@ -345,9 +347,9 @@ span-level citation 与复杂 comparison/inductive 表达，拒答策略也开�
 ### 7.3 测试入口与证据边界
 
 项目标准回归入口是 `python -m pytest -q`。旧记录中“该命令在远端通过、裸
-`pytest` 收集失败”只描述 2026 年 4 月环境。当前可确认的是本地 clean-checkout
-simulation 已通过 1009 项 public suite；尚无当前提交对应的 hosted
-Ubuntu/Windows CI green。
+`pytest` 收集失败”只描述 2026 年 4 月环境。当前本地 clean-checkout simulation
+已通过 1009 项 public suite，hosted run `33259417431` 也已在 Ubuntu 与 Windows
+通过同一 workflow 合同。
 
 ### 7.4 生成延迟仍是主要耗时项
 
@@ -364,7 +366,7 @@ Ubuntu/Windows CI green。
 验收环境：
 
 1. Python 3.12
-2. Ubuntu 或 Windows（CI 合同的两个目标；hosted 成功状态仍待外部证明）
+2. Ubuntu 或 Windows（CI 合同的两个目标；run `33259417431` 已双平台通过）
 3. deterministic gate 使用 CPU-only PyTorch，不要求 GPU、模型下载或 API key
 4. 真实 embedding/reranker/生成运行可另外配置 GPU 和 provider
 
@@ -602,8 +604,8 @@ chunks 和 reviewed corpus attestation。显式 `STAGE6_CHUNKS_SHA256` 只能固
 3. 远端保留了从 `tmp_stage3_*` 到 `tmp_stage15_*` 的多轮实验目录
 4. 远端 `artifacts/` 中保留了 4 月 10 日的多轮 dev / full repro 产物
 
-这些记录说明项目曾有远端实验，但由于没有当前 `RunIdentity`、lock hash、reviewed
-资产与 hosted CI 证明，不能据此推断当前版本 READY。
+这些历史记录本身没有当前 `RunIdentity`、lock hash 或 reviewed 资产绑定，不能据此
+推断当前版本 READY；当前 hosted CI 证据应单独引用 run `33259417431`。
 
 ## 10. 面试/答辩时怎么介绍这个项目
 

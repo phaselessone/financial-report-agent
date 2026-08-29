@@ -6,21 +6,22 @@
 
 截至 2026-08-29，代码实现、严格产物合同以及无私有数据的本地 clean-checkout
 workflow 已通过；版本控制交付状态以本轮最终 branch/commit 记录为准，不再引用
-提交前的瞬时 `git status` 计数。由于 reviewed hard-case/semantic/Stage 6 资产仍
-缺失，且没有 hosted Ubuntu/Windows CI 成功记录，项目不能标记为全局
-COMPLETE，也不能发布 reviewed benchmark 性能结论。为避免把不同层次的“完成”
+提交前的瞬时 `git status` 计数。Hosted deterministic-ci run
+[`33259417431`](https://github.com/phaselessone/financial-report-agent/actions/runs/33259417431)
+已在 Ubuntu 与 Windows 通过；但 reviewed hard-case/semantic/Stage 6 资产仍缺失，
+因此项目不能标记为全局 COMPLETE，也不能发布 reviewed benchmark 性能结论。为避免把不同层次的“完成”
 混为一谈，本文件只使用以下三种口径：
 
 - **`COMPLETE_LOCAL`：** 代码、接口、测试、严格产物和本地 workflow 合同已经实现并通过当前工作区验收。
 - **`SYNTHETIC_CONTRACT_ONLY / NON-PUBLISHABLE`：** 合成 100-case 仅证明四 profile 可以在固定身份和严格产物合同下完整执行；`performance_claim_allowed=false`，不得据此声明真实质量、排名或性能提升。
-- **`BLOCKED_EXTERNAL_ASSETS`：** 本地代码路径已经准备好，但缺少不能从 synthetic fixture、模型输出或现有 corpus 推造的 reviewed/private 资产，或缺少外部平台的成功运行证据。
+- **`BLOCKED_EXTERNAL_ASSETS`：** 本地代码路径已经准备好，但缺少不能从 synthetic fixture、模型输出或现有 corpus 推造的 reviewed/private 资产。
 
 据此，当前总状态是：
 
 - Phase A–D 的生产行为与严格合同为 **`COMPLETE_LOCAL`**。
 - Phase E 的四 profile 执行框架、评估与归因框架为 **`COMPLETE_LOCAL`**；当前实际四 profile run 仅为 **`SYNTHETIC_CONTRACT_ONLY / NON-PUBLISHABLE`**。
 - Phase F 的 semantic scorer 接线、校准门禁和历史证据门禁为 **`COMPLETE_LOCAL`**；reviewed semantic labels 与 Stage 6 历史 corpus 资产为 **`BLOCKED_EXTERNAL_ASSETS`**。
-- Phase G 的本地 CI 合同、文档和可观测性为 **`COMPLETE_LOCAL`**；hosted Ubuntu/Windows CI 成功记录为 **`BLOCKED_EXTERNAL_ASSETS`**。
+- Phase G 的 CI 合同、文档和可观测性为 **`COMPLETE_LOCAL + HOSTED_GREEN`**；run `33259417431` 的 Ubuntu/Windows 两个矩阵作业均成功。
 - 历史 full seed/results 已通过 attestation 身份门禁，但历史 Stage 6 corpus 内容重放仍独立阻塞。
 - M10 继续 `KEEP_M10_P2`；现有 corpus 质量证据不支持提升 OCR/Table 优先级。
 
@@ -59,7 +60,7 @@ COMPLETE，也不能发布 reviewed benchmark 性能结论。为避免把不同�
 | D Structured Fact v2 | `COMPLETE_LOCAL` | 显式 `MetricSpec`；ACTUAL/ADJUSTED/FORECAST 严格区分；scope/date/revision/basis；Q2 单季与累计口径不再自动混同；DuckDB filter pushdown；legacy JSONL 与 read-only DuckDB 加载 | 无本地代码缺口 |
 | E 四 profile / reviewed metrics | 框架 `COMPLETE_LOCAL`；当前 run 为 `SYNTHETIC_CONTRACT_ONLY` | 四个 canonical profile；共享 comparison identity；完整 per-case trajectory；同参 report-search 跨计划去重；case 级 executor failure；gold/process/contract 指标分层；reviewed claim/calculation 非零分母发布门禁；extra calculation 七维惩罚；evidence mismatch 归因；`EXPECTED_ABSTENTION` 与 observed process failure 分离 | 缺正式 reviewed cases/manifest；当前 run `performance_claim_allowed=false`，不得发布排名或质量提升 |
 | F semantic / 历史资产 | 代码 `COMPLETE_LOCAL`；资产 `BLOCKED_EXTERNAL_ASSETS` | reviewed label schema；precision-first calibration；local-only directional-NLI scorer；READY readiness + actual labels/hash + calibration + scorer identity 四方绑定；deterministic→NLI→bounded LLM judge；full seed/results 已通过 attestation；historical runtime 前置 Stage 6 门禁；reviewed/historical model revision fail closed | 缺 reviewed semantic labels 及可信 SHA；缺 hash-pinned、内容兼容的 Stage 6 corpus 与 reviewed attestation；正式 semantic activation 未运行 |
-| G CI / docs / observability | 本地 `COMPLETE_LOCAL`；hosted CI `BLOCKED_EXTERNAL_ASSETS` | `requirements.lock`；固定 `ruff==0.12.12`；11 个 Phase G/CI/评测核心文件的增量 lint + format-check；Ubuntu/Windows CPU-only workflow；provider-free 四 profile step；263-file clean snapshot 在无 `data/`、无人类 attestation 条件下通过静态门禁、1009 public tests、strict/subset/four-profile/Phase0；持久化 verdict；strict HTML | GitHub token 当前无效，尚无 hosted Ubuntu/Windows green；本地 clean simulation 不能替代 hosted run |
+| G CI / docs / observability | `COMPLETE_LOCAL + HOSTED_GREEN` | `requirements.lock`；固定 `ruff==0.12.12`；11 个 Phase G/CI/评测核心文件的增量 lint + format-check；Ubuntu/Windows CPU-only workflow；provider-free 四 profile step；263-file clean snapshot 在无 `data/`、无人类 attestation 条件下通过静态门禁、1009 public tests、strict/subset/four-profile/Phase0；持久化 verdict；strict HTML | hosted run `33259417431`：Ubuntu 2m09s、Windows 4m23s，两个矩阵作业全部成功；仅有 Node.js 20 action-deprecation annotation |
 | H M10 OCR/Table | `KEEP_M10_P2` | 3359 页、23942 chunks、194 documents 的 corpus quality gate 仍支持延期 | 只有人工复核证明 OCR/Table 是主要失败来源后才另开计划 |
 
 ### 3.1 详细计划的最终 COMPLETE 条件审计
@@ -76,9 +77,9 @@ COMPLETE，也不能发布 reviewed benchmark 性能结论。为避免把不同�
 | Claim/Calculation Accuracy 来自 reviewed gold | `BLOCKED_EXTERNAL_ASSETS` | evaluator 和非零分母发布门禁已完成；缺 `reviewed_cases.jsonl` / `reviewed_manifest.json` |
 | 授权外部资产到位后 readiness=READY | `BLOCKED_EXTERNAL_ASSETS` | 50-row seed/results/attestation 已 READY；顶层仍因 reviewed semantic labels 缺失而 `BLOCKED` |
 | semantic scorer 只在 precision-first calibration 通过后启用 | 门禁 `COMPLETE_LOCAL`；正式激活 `BLOCKED_EXTERNAL_ASSETS` | readiness + standalone calibration + actual labels/hash + scorer config/identity 四方 fail-closed 绑定已实现；缺 reviewed labels 与授权 local model/config |
-| CI、全量测试、hard-case subset 和文档验收全通过 | 本地 `COMPLETE_LOCAL`；hosted CI `BLOCKED_EXTERNAL_ASSETS` | 全仓、Phase 0、十类 balanced subset、编译、Ruff、依赖和 diff 门禁均通过；`gh` token 失效，无 Ubuntu/Windows hosted green |
+| CI、全量测试、hard-case subset 和文档验收全通过 | `COMPLETE_LOCAL + HOSTED_GREEN` | 全仓、Phase 0、十类 balanced subset、编译、Ruff、依赖和 diff 门禁均通过；hosted run `33259417431` 在 Ubuntu/Windows 均成功 |
 
-结论：所有不依赖外部人工 reviewed/private 资产或 GitHub 平台状态的条件已在本地闭环；由于上表仍有必要条件为 `BLOCKED_EXTERNAL_ASSETS`，整轮升级必须保持非全局 COMPLETE。
+结论：工程实现和 hosted CI 已闭环；由于上表仍有 reviewed/private 资产必要条件为 `BLOCKED_EXTERNAL_ASSETS`，整轮升级必须保持非全局 COMPLETE。
 
 ## 4. 当前权威验收结果
 
@@ -88,14 +89,15 @@ COMPLETE，也不能发布 reviewed benchmark 性能结论。为避免把不同�
 - 当前工作区完整 suite：`1011 passed, 1 skipped`。JUnit：`outputs/test-results/full_final_20260829.xml`，SHA-256 `1a87beb6f38ca08d85659806dd5a4ab0dc70b682211c47daecbf977cb41f4db2`。唯一 skip 是缺失真实 Stage 6 snapshot 时必须保留的 private restore gate，不能用兼容重建或 synthetic corpus 消除。
 - clean-checkout public suite：`1009 passed`；RunIdentity/eval 定向组：`59 passed`；evidence/Phase-G 定向组：`31 passed`。
 - Phase 0 deterministic smoke：`200 passed`。JUnit：`outputs/test-results/phase0_smoke_final_20260829.xml`，SHA-256 `f0fa88b584dffcb3f26bdea4919b3fbc1b46350ca8b53b6a12328db37fa05387`。strict observability：`READY`；balanced hard-case subset：PASS；four-profile contract：`SYNTHETIC_CONTRACT_ONLY`。
-- clean-checkout 结果来自不含 `data/` 和 human attestation 的 263-file snapshot，仅证明本地公开工作流可复现，不替代 hosted CI。
+- clean-checkout 结果来自不含 `data/` 和 human attestation 的 263-file snapshot；hosted run `33259417431` 已在 Ubuntu 与 Windows 交叉验证同一公开工作流合同。
+- hosted deterministic-ci：run `33259417431`，head SHA `48945449f0f36ae3c0ffb6590ab92f8087b5769e`，Ubuntu `success`（2m09s），Windows `success`（4m23s）。
 - Balanced hard-case subset：10 cases，10 类各 1 条，subset SHA-256 `5ef1c2dc33de427aeba77a9bf5d564b930dea9e0e5eb07199821f836abfc5dd4`；当前重跑 PASS。
 - `uv --no-cache pip check --python .venv\Scripts\python.exe`：通过，`77 packages compatible`。使用 `--no-cache` 是因当前 sandbox 无权读写用户级 `uv` cache，与依赖一致性无关。
 - `ruff check`：通过；`ruff format --check`：`11 files already formatted`。该门禁是明确列出的 Phase G/CI/评测核心文件增量作用域，不代表全仓历史样式债已清零。
 - `python -m compileall -q src scripts` 与定向 `py_compile`：通过。
 - current-dev、strict-observability 和 profile 共享 canonical source manifest：234 files，`hash_policy=text-lf-normalized-v1`，hash `d7382d6e8f6afc39a58857308b6be772ab728790de715a34fe119524310e36ca`；manifest 文件 SHA-256 `06472d69c2907e81b9cd89999d7d1e6c6af8f1b7383b1cab8f542c16e821a20c`。
 - `git diff --check`：通过，无 whitespace error；仅有 Windows CRLF 提示。
-- 上述通过项证明当前工作区的本地实现与合同一致；它们不替代 reviewed benchmark、semantic calibration、historical corpus replay 或 hosted CI。
+- 上述通过项及 hosted green 证明当前实现与公开 workflow 合同一致；它们仍不替代 reviewed benchmark、semantic calibration 或 historical corpus replay。
 
 ### 4.1.1 计划规定的九类端到端场景
 
@@ -231,7 +233,6 @@ reviewed benchmark 判定。
 | Historical Stage 6 replay | 是 | 内容、页码、文档身份均与 historical gold 对应的 hash-pinned `tmp_stage6_data/chunks/chunks.jsonl` | 当前 23942-chunk corpus 与 ID-compatible rebuild 均已证明不能替代历史 snapshot |
 | Stage 6 provenance | 是 | `benchmarks/full/historical-stage6-corpus.attestation.json`，需由资产负责人绑定来源、owner、review、chunk count 与 seed/results hashes | observed SHA 只能证明看到某文件，不能证明其来源与 reviewed 身份 |
 | Reviewed 四 profile 性能比较 | 是 | `benchmarks/hard_cases/reviewed_cases.jsonl` 与 `reviewed_manifest.json`，以及正式模型的 pinned revision | synthetic 100 只验证执行合同，不能生成可发布的 reviewed Accuracy 或 profile 排名 |
-| Hosted CI | 是 | 当前 GitHub token 无效，尚无 Ubuntu/Windows hosted green | 已通过的 263-file clean-checkout simulation 是本地 workflow 证据，但不能替代 GitHub Actions 对最终提交的成功记录 |
 
 这些阻塞项在资产缺失时必须保持 BLOCKED；不得从当前 48-row seed、synthetic 100 cases、兼容重建 corpus 或模型输出来推造。
 
@@ -297,7 +298,7 @@ $env:SEMANTIC_LABELS_SHA256 = "<authorized-sha256>"
 - semantic activation identity 与 labels/calibration/config/model hashes 完全一致。
 - `historical-full-core` 与 `historical-full-raw` 没有混合聚合。
 - historical Stage 6 corpus 内容门禁与 reviewed attestation 均为 READY。
-- hosted CI 在 Ubuntu 与 Windows 均实际成功。
+- hosted CI 在 Ubuntu 与 Windows 均实际成功（已由 run `33259417431` 满足）。
 - README 或报告中的任何性能数字都直接引用 reviewed bundle，而不是 synthetic/current-dev contract。
 
 在这些条件全部满足前，项目总状态保持 `BLOCKED_EXTERNAL_ASSETS`，不得写成全局 COMPLETE，也不得宣称 reviewed 性能提升。

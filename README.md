@@ -91,7 +91,11 @@ uv venv .venv
 uv pip install --python .venv/bin/python -r requirements.lock
 ```
 
-The current-worktree workflow targets Ubuntu and Windows, but no successful hosted GitHub Actions run has been supplied as acceptance evidence. The current
+The current-worktree workflow targets Ubuntu and Windows. Before deterministic-ci
+run [`33259417431`](https://github.com/phaselessone/financial-report-agent/actions/runs/33259417431),
+no successful hosted GitHub Actions run has been supplied as acceptance evidence;
+that push run now supplies green Ubuntu and Windows evidence for commit
+`48945449f0f36ae3c0ffb6590ab92f8087b5769e`. The current
 `faiss-cpu` wheel requires at least macOS 14 on Apple Silicon and macOS 15 on
 Intel; older macOS versions are not part of the supported lock contract.
 
@@ -339,9 +343,10 @@ A local 263-file clean-checkout simulation containing neither `data/` nor the hu
 attestation file passed compilation, Ruff, `uv pip check`, 59 RunIdentity/evaluation
 tests, 31 evidence/Phase-G tests, the 1009-test public suite, strict observability
 (`READY`), the balanced hard-case subset, the four-profile synthetic contract, and
-Phase 0 smoke (`200 passed`). This is local reproducibility evidence only. The
-workflow file and that simulation do not replace an actual hosted Ubuntu/Windows
-GitHub Actions green run.
+Phase 0 smoke (`200 passed`). This remains useful local reproducibility evidence;
+hosted run `33259417431` subsequently passed the same contract on both Ubuntu and
+Windows. The run emitted only the GitHub runner's Node.js 20 action-deprecation
+notice, not a test or gate failure.
 
 The provider-free four-profile job also avoids ignored `data/`: in explicit
 `--offline-contract --contract-oracle` mode, the runner materializes one
