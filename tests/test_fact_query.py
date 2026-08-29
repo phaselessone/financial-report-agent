@@ -14,7 +14,8 @@ from decimal import Decimal
 
 from src.structured.fact_query import FactQuery, detect_query_signature, route
 from src.structured.fact_store import FactStore
-from src.structured.schema import FinancialFact, Metric, Period, PeriodType
+from src.structured.schema import FinancialFact, Metric, Period, PeriodType, ValueType
+from src.structured.structured_query import StructuredQuery
 
 ALIASES = {"贵州茅台": ["贵州茅台", "茅台"], "五粮液": ["五粮液"]}
 
@@ -68,11 +69,41 @@ class TestDetectQuerySignature(unittest.TestCase):
     def test_missing_period_even_with_anchor_none(self) -> None:
         self.assertIsNone(detect_query_signature("茅台营收", company_aliases=ALIASES, anchor_year=2025))
 
-    def test_out_of_scope_metric_none(self) -> None:
-        self.assertIsNone(detect_query_signature("贵州茅台2025年净利率", company_aliases=ALIASES))
+    def test_extended_metric_routes_structured_lookup(self) -> None:
+        signature = detect_query_signature("贵州茅台2025年净利率", company_aliases=ALIASES)
+        self.assertIsNotNone(signature)
+        assert signature is not None
+        self.assertEqual(signature.metric, Metric.NET_MARGIN)
 
     def test_empty_none(self) -> None:
         self.assertIsNone(detect_query_signature("", company_aliases=ALIASES))
+
+    def test_period_range_is_not_adapted_to_legacy_fact_query(self) -> None:
+        self.assertIsNone(
+            detect_query_signature("贵州茅台近三年营业收入", company_aliases=ALIASES, anchor_year=2025)
+        )
+
+    def test_fact_query_is_a_structured_query_adapter(self) -> None:
+        legacy = FactQuery(company="贵州茅台", metric=Metric.REVENUE, period=Period("FY", 2025))
+        structured = legacy.to_structured_query()
+        self.assertIsInstance(structured, StructuredQuery)
+        self.assertEqual(structured.operation, "lookup")
+        self.assertEqual(FactQuery.from_structured_query(structured), legacy)
+
+    def test_adapter_preserves_v2_query_coordinates(self) -> None:
+        legacy = FactQuery(
+            company="贵州茅台",
+            metric=Metric.REVENUE,
+            period=Period("Q2", 2025),
+            value_type=ValueType.ADJUSTED,
+            period_basis="standalone",
+            accounting_scope="consolidated",
+            revision_status="restated",
+        )
+        structured = legacy.to_structured_query()
+        self.assertEqual(structured.accounting_scope, "consolidated")
+        self.assertEqual(structured.revision_status, "restated")
+        self.assertEqual(FactQuery.from_structured_query(structured), legacy)
 
 
 class TestRoute(unittest.TestCase):
@@ -128,6 +159,16 @@ class TestRoute(unittest.TestCase):
         result = route("2025年上半年五粮液毛利率", store=self.store, company_aliases=ALIASES)
         self.assertIsNotNone(result)
         self.assertIn("25%", result["answer"])
+
+    def test_route_preserves_adjusted_isolation_through_adapter(self) -> None:
+        self.store.upsert([
+            make_fact(doc_id="doc-actual", evidence_id="E-actual"),
+            make_fact(value_type="adjusted", doc_id="doc-adjusted", evidence_id="E-adjusted"),
+        ])
+        result = route("贵州茅台2025年经调整营业收入", store=self.store, company_aliases=ALIASES)
+        self.assertIsNotNone(result)
+        self.assertEqual(len(result["facts"]), 1)
+        self.assertEqual(result["facts"][0].value_type, ValueType.ADJUSTED)
 
 
 if __name__ == "__main__":

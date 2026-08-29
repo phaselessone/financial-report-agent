@@ -1,15 +1,61 @@
 # 金融研报 RAG 项目技术说明与搭建说明
 
+## 0. 当前验收状态（2026-08-29）
+
+这份文档同时保留“当前实现说明”和“2026 年 4 月历史实验快照”。两类证据
+不可混用：历史模型、远端路径、指标和 `73 passed` 只说明当时的状态，不是
+当前版本的验收结论。
+
+- Phase 0 readiness: `BLOCKED`。经人工复核并固定 SHA-256 的 50-row full seed
+  与历史 full results 已恢复并通过 attestation；reviewed semantic labels 仍缺失。
+  历史 full 重放还单独缺少 hash-pinned、内容兼容的 Stage 6 chunks snapshot，
+  因此不能宣称 full benchmark、semantic calibration 或四 profile 效果已通过。
+- 当前可验证的是离线 deterministic contract：统一 `ReasoningPlan` 图、结构化
+  lookup/search/calculation、claim/citation/calculation provenance、严格
+  `RunIdentity` 与 strict eval bundle。
+- `scripts/strict_observability_smoke.py` 会跑真实图节点并写入持久化、与 bundle
+  hash 绑定的 `READY` integrity verdict；该工件永久标记
+  `SYNTHETIC_CONTRACT_ONLY`、`publishable=false`，不能作为质量提升证据。
+- `scripts/regenerate_dev_trace.py` 从当前 `chunks.jsonl`、`facts.duckdb` 和
+  `company_aliases.json` 选择一个无歧义真实语料案例，跑结构化查询、确定性
+  `net_margin`、claim verification 和 strict bundle，生成
+  `outputs/reports/agent_eval_bundle_dev.json`。该工件标记
+  `REAL_CORPUS_DEV_CONTRACT_ONLY`、`publishable=false`；旧
+  `agent_traces_dev.jsonl` 保留为 BLOCKED migration fixture。
+- `.github/workflows/ci.yml` 是 Ubuntu/Windows CPU-only 的可复现工作流合同；
+  目前没有可作为终验依据的 hosted GitHub Actions 成功记录。
+- 一个不含 `data/` 和 human attestation 的 263-file clean-checkout 本地快照已通过
+  compile、Ruff、`uv pip check`、59 项 RunIdentity/eval 回归、31 项
+  evidence/Phase-G 回归、1009 项 public suite、strict READY、balanced hard-case
+  subset、四 profile synthetic contract 和 Phase 0 的 200 项 smoke；这仍是本地
+  模拟，不是 hosted CI 成功记录。
+- `make four-profile-contract` 会在无 provider、无网络、无模型下载的条件下真实执行
+  100 条 synthetic contract × 四个 profile，生成四个独立 bundle。该结果永久为
+  `SYNTHETIC_CONTRACT_ONLY`；三条 graph-backed profile 必须通过 evidence-integrity，
+  baseline 因不含 verified-claim 层而明确标为 `NOT_APPLICABLE`。
+- 100-case 四 profile 只验证入口、身份、bundle 和 integrity 合同，不证明每一类别
+  都激活同名 treatment；当前 `derived_calculation` / `multi_hop` rows 仍通过
+  `SEARCH` 完成且 calculation count 为 0，具体 treatment activation 由
+  `tests/test_profile_runtime.py` 独立覆盖。
+- 正式 semantic 激活只接受 reviewed readiness/calibration JSON 加一个匹配
+  `benchmarks/semantic/directional-nli-config.schema.json` 的本地 scorer config；配置
+  hash、labels hash、calibration report hash 和模型 revision 全部进入 RunIdentity，且
+  强制 `local_files_only=true`、`trust_remote_code=false`。
+- 当前复现与验收命令以本文第 8 节和 README 为准；第 6、9 节明确属于
+  **历史快照（非当前验收）**。
+
 ## 1. 项目定位
 
 这个项目不是一个通用聊天机器人，而是一套面向金融/行业研报 PDF 的端到端 RAG 系统。目标是把大量结构复杂、更新频繁、带表格和标题层级的研究报告，转成可检索、可引用、可评测的问答系统。
 
-当前系统已经覆盖四条主线：
+当前系统覆盖六条主线：
 
 1. PDF 解析、清洗、分块与中间产物落盘
 2. Dense / BM25 / Hybrid / Rerank 检索链路
 3. 基于证据的答案生成、引用绑定、支持性校验与拒答
 4. 检索级与答案级评测、坏例收集、运行归档
+5. LangGraph 状态图上的 `ReasoningPlan -> execute_step -> dependency_gate`
+6. claim / citation / calculation provenance 与 strict eval bundle 完整性门禁
 
 代码主入口位于：
 
@@ -17,6 +63,8 @@
 - `run_prepare_benchmark.py`：评测物料准备
 - `run_retrieval_eval.py`：检索评测
 - `run_answer_eval.py`：答案生成与答案级评测
+- `run_agent.py` / `run_agent_eval.py`：Agent 图执行与 strict bundle 评测
+- `run_profile_ablation.py`：四 profile 合同执行；正式比较必须使用外部 reviewed 资产
 
 ## 2. 为什么做 RAG，而不是直接微调
 
@@ -44,11 +92,13 @@
 
 ### 4.1 数据流
 
-完整数据流为：
+当前主数据流为：
 
-`pdf/` -> `data/parsed_pages` -> `data/cleaned_pages` -> `data/elements` -> `data/chunks` -> `outputs/indexes` / `outputs/reports` / `outputs/badcases` -> `artifacts/`
+`pdf/` -> `data/parsed_pages` -> `data/cleaned_pages` -> `data/elements` ->
+`data/chunks` / structured facts -> `ReasoningPlan` -> `execute_step` ->
+`dependency_gate` -> synthesize -> claim verification -> strict eval bundle
 
-历史压力测试则使用 stage6 语料：
+以下 stage6 路径仅是历史压力测试快照，不是当前验收默认路径：
 
 `data/raw_pdfs/incoming` -> `tmp_stage6_data/chunks/chunks.jsonl` -> `outputs/` / `artifacts/`
 
@@ -138,6 +188,26 @@
 4. 错在哪种题型
 5. 哪些是召回问题，哪些是生成问题，哪些是引用问题
 
+#### E. Agent 与结构化事实层
+
+对应目录：`src/agent/`、`src/structured/`
+
+当前 LangGraph 主链路为：
+
+```text
+analyze_query
+  -> build_reasoning_plan
+  -> plan_next_step -> execute_step -> observe_step_result -> repeat
+  -> dependency_gate
+  -> grade_evidence / rewrite_query（仅在需要时）
+  -> synthesize -> extract_claims -> verify_answer -> finalize
+```
+
+所有问题都进入同一个 `ReasoningPlan`。`execute_step` 统一执行 `LOOKUP`、
+`SEARCH` 和 `CALCULATE`，并保留完整 period/value-type/accounting-scope/revision
+坐标、依赖、输入 evidence/fact、公式和舍入记录。最终非拒答内容必须经过原子
+claim 提取与确定性 provenance 校验；只有 `ENTAILED` claim 的证据可以进入引用。
+
 ## 5. 技术选型与理由
 
 ## 5.1 当前实际采用的技术
@@ -149,7 +219,9 @@
 | Dense Index | FAISS |
 | Sparse Retrieval | BM25 |
 | Reranker | `BAAI/bge-reranker-v2-m3` |
-| LLM Provider | DeepSeek API 或本地 `Qwen/Qwen2.5-7B-Instruct` |
+| Agent orchestration | LangGraph 统一状态图 |
+| Structured facts | DuckDB + metric/period/value-type registry |
+| LLM Provider | 可选 DeepSeek/OpenAI-compatible API 或本地模型；非 deterministic 验收前提 |
 | 评测输出 | JSON / JSONL / Markdown |
 | 远端运维 | `scripts/remote_ops.py` + Paramiko |
 
@@ -160,8 +232,8 @@
 更准确的说法是：
 
 1. 当前项目借鉴了成熟 RAG 工程里的思路，但实现上偏“轻量自建链路”
-2. 真正落地的核心依赖主要是 PyMuPDF、FAISS、BGE embedding/reranker、DeepSeek/Qwen
-3. 暂未引入 Milvus、Elasticsearch、LangChain 编排或 GraphRAG 复杂图检索，这样做是为了先把 PDF ingest、检索质量、证据约束和评测闭环打稳
+2. 当前核心依赖包括 PyMuPDF、FAISS、BGE embedding/reranker、LangGraph、DuckDB；DeepSeek/Qwen 是可选生成 provider
+3. 当前已使用 LangGraph 编排，但未采用 LangChain-ChatChat、Milvus、Elasticsearch 或 GraphRAG；是否引入它们取决于规模和检索需求，而不是验收口号
 
 如果在面试里被问“为什么不用 Milvus / LangChain / GraphRAG”，可以直接答：
 
@@ -169,16 +241,18 @@
 2. 项目优先解决 PDF 结构化、混合检索和可追溯评测
 3. 先把单机版本闭环做实，比堆中间件更有价值
 
-## 6. 当前已验证的工程状态
+## 6. 历史快照（非当前验收）
 
-以下结论基于本地代码、远端部署实例 `/root/autodl-tmp/financial-rag-project`、远端 summary 文件，以及远端测试结果。
+本节归档 2026 年 4 月旧远端部署、旧 provider 配置、旧路径与旧指标，便于
+追溯演进。它们没有绑定当前 strict `RunIdentity`、`requirements.lock`、reviewed
+资产和 READY 门禁，**不得作为当前版本验收、profile 排名或质量提升声明**。
 
 ### 6.1 环境与测试
 
-1. 远端健康检查通过：Python、依赖、DeepSeek 配置、评测种子均可用
-2. 远端测试使用项目标准入口 `python -m pytest -q`，结果为 `73 passed`
-3. 当前远端部署路径为 `/root/autodl-tmp/financial-rag-project`
-4. 远端存在独立 `.venv`，已配置 `.env.deepseek` / `.env.runtime`
+1. 历史记录称远端健康检查、DeepSeek 配置和当时评测种子可用
+2. 历史记录的测试结果为 `73 passed`；该数字不是当前测试总数或终验结果
+3. 历史远端部署路径为 `/root/autodl-tmp/financial-rag-project`
+4. 历史实例曾配置 `.env.deepseek` / `.env.runtime`
 
 ### 6.2 数据与 chunk
 
@@ -193,7 +267,7 @@
 
 ### 6.3 检索结果
 
-远端当前 `outputs/reports/retrieval_eval_summary.json` 显示，在 48 条检索评测题上：
+历史远端 `outputs/reports/retrieval_eval_summary.json` 曾记录以下 48 题结果：
 
 | 方法 | Recall@5 | Recall@10 | MRR@10 |
 |---|---:|---:|---:|
@@ -202,7 +276,8 @@
 | Hybrid | 0.5417 | 0.7083 | 0.4000 |
 | Hybrid+Rerank | 0.6667 | 0.6667 | 0.6038 |
 
-结论很明确：`Hybrid+Rerank` 仍然是当前最强的生产检索入口。
+该 2026 年 4 月历史快照中，`Hybrid+Rerank` 的上述指标最好；这不能证明它仍是
+当前版本最强或当前生产环境的最优入口。
 
 ### 6.4 答案评测结果
 
@@ -219,7 +294,7 @@
 | Fallback Rate | 0.1875 |
 | Failed Query Count | 0 |
 
-这说明当前版本在当前语料的开发集上已经达到“可以继续迭代”的状态。
+该 2026 年 4 月 dev 快照只说明当时已进入可继续迭代的状态，不能作为当前版本验收。
 
 #### Full Core 历史压力集（historical-full-core，40 题）
 
@@ -237,11 +312,9 @@
 | Fallback Rate | 0.1500 |
 | Failed Query Count | 0 |
 
-这个结果说明：
-
-1. 在历史核心集上，系统已经不是“跑不通”，而是进入了精修阶段
-2. 当前最大短板不是 doc-level citation，而是 span-level citation 和复杂 comparison / inductive 表达
-3. 拒答策略已经开始变得有用，不再是完全失控
+在该历史 core 压力集中，系统能够完整执行；当时观察到的主要短板是
+span-level citation 与复杂 comparison/inductive 表达，拒答策略也开始产生作用。
+这些都是历史诊断，不是当前 reviewed benchmark 结论。
 
 ### 6.5 一个必须讲清楚的 benchmark 口径
 
@@ -269,9 +342,12 @@
 
 早期复盘文档记录的是 4 月 5 日左右的结果，和 4 月 10 日后的最新复现实验已经不一致。对内问题不大，但如果直接拿旧文档对外讲，会低估或误讲当前状态。
 
-### 7.3 裸跑 `pytest` 存在入口陷阱
+### 7.3 测试入口与证据边界
 
-项目标准回归命令是 `python -m pytest -q`，而不是裸 `pytest -q`。前者在远端通过，后者会因为导入路径问题在收集阶段失败。这类问题不影响主链路，但会影响新同学搭环境和 CI 接入体验。
+项目标准回归入口是 `python -m pytest -q`。旧记录中“该命令在远端通过、裸
+`pytest` 收集失败”只描述 2026 年 4 月环境。当前可确认的是本地 clean-checkout
+simulation 已通过 1009 项 public suite；尚无当前提交对应的 hosted
+Ubuntu/Windows CI green。
 
 ### 7.4 生成延迟仍是主要耗时项
 
@@ -285,14 +361,16 @@
 
 ## 8.1 环境要求
 
-推荐环境：
+验收环境：
 
 1. Python 3.12
-2. Linux / WSL / Git Bash
-3. CUDA GPU（检索 embedding、reranker、本地生成时更合适）
-4. 如果只走 DeepSeek API，可不依赖本地生成模型
+2. Ubuntu 或 Windows（CI 合同的两个目标；hosted 成功状态仍待外部证明）
+3. deterministic gate 使用 CPU-only PyTorch，不要求 GPU、模型下载或 API key
+4. 真实 embedding/reranker/生成运行可另外配置 GPU 和 provider
 
-核心依赖见 `requirements.txt`：
+可复现安装使用 `requirements.lock`。`requirements.txt` 与
+`requirements-dev.txt` 是更新 lock 时的开发输入；不能用未锁定安装替代终验。
+核心依赖包括：
 
 - PyMuPDF
 - numpy
@@ -304,29 +382,27 @@
 - modelscope
 - torch
 - httpx
-- pytest
+- LangGraph
+- DuckDB
 
 ## 8.2 创建虚拟环境
 
 Linux / WSL:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -U pip
-pip install -r requirements.txt
+uv venv .venv
+uv pip install --python .venv/bin/python -r requirements.lock
 ```
 
 Windows PowerShell:
 
 ```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -U pip
-python -m pip install -r requirements.txt
+uv venv .venv
+uv pip install --python .venv\Scripts\python.exe -r requirements.lock
 ```
 
-如果需要远端运维脚本，再额外安装：
+如果在开发环境中需要调整依赖或运行远端运维脚本，分别查看
+`requirements-dev.txt` / `requirements-ops.txt`，更新后应重新生成并审核 lock：
 
 ```bash
 pip install -r requirements-ops.txt
@@ -368,12 +444,26 @@ DEEPSEEK_API_KEY=你的密钥
 pdf/
 ```
 
-如果要跑历史 full core / raw 压力集，需要确认 stage6 历史语料已准备好，例如：
+如果要重放历史 full core/raw 快照，需要恢复并校验 stage6 历史语料；以下是
+legacy 路径，不是可直接声明 READY 的当前资产：
 
 ```text
 tmp_stage6_data/chunks/chunks.jsonl
 data/eval_set/answer_eval_seed_full.jsonl
 ```
+
+候选 Stage 6 不能只靠 gold chunk ID 存在来验收。必须同时取得资产负责人提供的
+reviewed sidecar（合同见
+`benchmarks/full/historical-stage6-corpus.attestation.schema.json`），再运行内容级门禁：
+
+```bash
+python scripts/historical_full_evidence_gate.py \
+  --chunks-path tmp_stage6_data/chunks/chunks.jsonl
+```
+
+该门禁同时核对 corpus 来源/owner/review、hash、文本、页码、doc ID 和文件名；
+任何 ID-only 的兼容重建都不能替代历史 snapshot。显式 SHA 只用于诊断探针，不能
+替代 reviewed corpus attestation。
 
 ## 8.5 健康检查
 
@@ -445,6 +535,7 @@ bash scripts/ragctl.sh answer-eval-dev
 python run_answer_eval.py \
   --split full \
   --benchmark-profile historical-full-core \
+  --model-revision <pinned-provider-revision> \
   --chunks-path tmp_stage6_data/chunks/chunks.jsonl \
   --data-dir tmp_stage6_data \
   --corpus-label stage6-historical \
@@ -454,40 +545,65 @@ python run_answer_eval.py \
 或：
 
 ```bash
-bash scripts/ragctl.sh answer-eval-full
+bash scripts/ragctl.sh answer-eval-full --model-revision <pinned-provider-revision>
 ```
+
+历史 full 评测采用不可覆盖的 profile/run 目录：
+
+```text
+outputs/eval_profiles/historical-full-core/runs/<profile_run_id>/
+outputs/eval_profiles/historical-full-raw/runs/<profile_run_id>/
+```
+
+每个 run 根目录独立保存 `benchmark/`、`reports/`、`badcases/` 和
+`RUN_POLICY.json`；后续运行不会覆盖既有 run。结果 JSONL 的每一行与 summary
+都会携带同一个完整 `RunIdentity`。profile-aware reader/merge 会拒绝 core 与
+raw 混用；旧参数 `historical-full` 只作为 `historical-full-raw` 的兼容别名。
+`current-dev` 继续使用原有 `outputs/reports`、`outputs/badcases` 布局，兼容现有
+脚本与文件路径。
 
 ### F. 跑测试
 
-推荐使用：
+当前公共 deterministic 回归（不伪造缺失 private full seed）：
 
 ```bash
-python -m pytest -q
+python -m pytest -q --ignore=tests/test_full_seed_restore.py
 ```
 
-如果只是按 `Makefile` 走：
+终验门禁：
 
 ```bash
-make test
+python scripts/phase0_gate.py readiness
+python scripts/historical_full_evidence_gate.py
+python scripts/strict_observability_smoke.py --output-root outputs/strict_observability_smoke
 ```
 
-## 9. 远端搭建与审查结果
+当前本地 full seed/results/attestation 已通过身份门禁；顶层 `readiness` 仍因
+reviewed semantic labels 缺失而返回 `BLOCKED`。只有
+`write_validated_eval_bundle` 写出的 agentic bundle 才持久化 bundle-bound READY
+verdict；observability 临时重算通过不能把无 verdict 的 bundle 冒充为 READY。
+历史 evidence gate 是独立门禁，必须同时取得内容兼容、hash-pinned 的 Stage 6
+chunks 和 reviewed corpus attestation。显式 `STAGE6_CHUNKS_SHA256` 只能固定诊断
+探针，不能让缺少 reviewed sidecar 的正式门禁变为 READY。
 
-本次审查确认，远端当前部署信息如下：
+## 9. 历史远端部署快照（非当前验收）
+
+以下信息来自旧审查记录，仅用于定位历史工件：
 
 - 主机：`connect.westb.seetacloud.com:25485`
 - 用户：`root`
 - 部署目录：`/root/autodl-tmp/financial-rag-project`
 - 虚拟环境：`/root/autodl-tmp/financial-rag-project/.venv`
 
-远端已验证：
+历史记录曾写明：
 
 1. `bash bootstrap/check_env.sh` 通过
-2. `python -m pytest -q` 通过，`73 passed`
+2. 当时 `python -m pytest -q` 为 `73 passed`；这不是当前终验测试计数
 3. 远端保留了从 `tmp_stage3_*` 到 `tmp_stage15_*` 的多轮实验目录
 4. 远端 `artifacts/` 中保留了 4 月 10 日的多轮 dev / full repro 产物
 
-说明这套项目不只是“本地代码堆着”，而是真正有部署、有回归、有阶段性实验记录。
+这些记录说明项目曾有远端实验，但由于没有当前 `RunIdentity`、lock hash、reviewed
+资产与 hosted CI 证明，不能据此推断当前版本 READY。
 
 ## 10. 面试/答辩时怎么介绍这个项目
 
@@ -498,7 +614,7 @@ make test
 3. 检索工程：不是单纯向量检索，而是 Dense + BM25 的混合召回，再用 reranker 做最终排序
 4. 生成工程：对 comparison / inductive 做了分题型处理，并且加了证据绑定、支持性校验和拒答
 5. 评测工程：不仅有 Recall/MRR，还有 answer hit、citation hit、support hit、abstain 和 badcase 归档
-6. 工程结论：dev 集已经达到可持续迭代状态，历史 core 压力集具备可用性，但复杂题型和 span-level citation 仍需继续优化
+6. 工程结论：current-dev、strict observability 与 synthetic four-profile 已证明当前执行链和证据合同可运行；reviewed benchmark 性能、semantic activation 和 historical Stage 6 replay 仍被外部资产阻塞。第 6 节性能数字只能作为 2026 年 4 月历史快照介绍
 
 如果对方继续追问，优先准备下面这些点：
 

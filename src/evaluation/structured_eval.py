@@ -19,6 +19,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable
 
+import duckdb
+
 from src.structured.fact_store import FactStore
 from src.structured.fact_query import route
 from src.structured.schema import FinancialFact, Metric, Period, PeriodType, ValueType
@@ -27,6 +29,27 @@ from src.structured.value_type import classify_value_type
 from src.utils.io import ensure_dir, read_jsonl, write_jsonl
 
 NUM_TOKEN_RE = re.compile(r"[+-]?\d[\d,]*(?:\.\d+)?\s*(?:亿元|万元|千元|亿|万|%)")
+_FACT_CORE_COLUMNS = (
+    "fact_id",
+    "company",
+    "metric",
+    "period_kind",
+    "year",
+    "value_type",
+    "value",
+    "unit",
+    "doc_id",
+    "page",
+    "evidence_id",
+    "raw_value",
+    "source_span",
+)
+_FACT_OPTIONAL_COLUMNS = (
+    "accounting_scope",
+    "period_basis",
+    "source_date",
+    "revision_status",
+)
 
 
 def load_structured_seed(path: Path) -> list[dict[str, Any]]:
@@ -38,6 +61,94 @@ def build_store_from_facts_jsonl(path: Path, *, db_path: str | Path = ":memory:"
     facts = [FinancialFact.from_dict(json.loads(line)) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
     store.upsert(facts)
     return store
+
+
+def build_store_from_facts_duckdb(
+    path: Path,
+    *,
+    db_path: str | Path = ":memory:",
+) -> FactStore:
+    """Load a legacy or v2 DuckDB snapshot into a writable in-memory store.
+
+    The source connection is strictly read-only. Missing v2 coordinate columns
+    are materialized as ``None`` in memory, so loading a legacy snapshot never
+    migrates or changes the hash of the bound source asset.
+    """
+
+    source = Path(path)
+    connection = duckdb.connect(str(source), read_only=True)
+    try:
+        tables = {str(row[0]) for row in connection.execute("SHOW TABLES").fetchall()}
+        if "facts" not in tables:
+            raise ValueError(f"DuckDB facts snapshot is missing table 'facts': {source}")
+        columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info('facts')").fetchall()
+        }
+        missing = sorted(set(_FACT_CORE_COLUMNS) - columns)
+        if missing:
+            raise ValueError(
+                "DuckDB facts snapshot is missing columns: " + ", ".join(missing)
+            )
+        selected = [*_FACT_CORE_COLUMNS, *_FACT_OPTIONAL_COLUMNS]
+        expressions = [
+            name if name in columns else f"NULL AS {name}"
+            for name in selected
+        ]
+        cursor = connection.execute(
+            "SELECT " + ", ".join(expressions) + " FROM facts ORDER BY fact_id"
+        )
+        names = [str(item[0]) for item in cursor.description]
+        rows = [dict(zip(names, values)) for values in cursor.fetchall()]
+    finally:
+        connection.close()
+
+    store = FactStore(db_path)
+    try:
+        facts = [
+            FinancialFact.from_dict(
+                {
+                    "fact_id": row["fact_id"],
+                    "company": row["company"],
+                    "metric": row["metric"],
+                    "period": {
+                        "kind": row["period_kind"],
+                        "year": row["year"],
+                    },
+                    "value_type": row["value_type"],
+                    "value": row["value"],
+                    "unit": row["unit"],
+                    "doc_id": row["doc_id"],
+                    "page": row["page"],
+                    "evidence_id": row["evidence_id"],
+                    "raw_value": row["raw_value"],
+                    "source_span": row["source_span"],
+                    "accounting_scope": row["accounting_scope"],
+                    "period_basis": row["period_basis"],
+                    "source_date": row["source_date"],
+                    "revision_status": row["revision_status"],
+                }
+            )
+            for row in rows
+        ]
+        store.upsert(facts)
+    except BaseException:
+        store.close()
+        raise
+    return store
+
+
+def build_store_from_facts_asset(
+    path: Path,
+    *,
+    db_path: str | Path = ":memory:",
+) -> FactStore:
+    """Load either the legacy JSONL export or a DuckDB fact snapshot."""
+
+    source = Path(path)
+    if source.suffix.lower() in {".duckdb", ".db"}:
+        return build_store_from_facts_duckdb(source, db_path=db_path)
+    return build_store_from_facts_jsonl(source, db_path=db_path)
 
 
 def gold_to_fact(row: dict[str, Any]) -> FinancialFact:

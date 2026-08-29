@@ -12,20 +12,15 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from src.structured.metric_registry import metric_label
 from src.structured.schema import FinancialFact, Metric
-
-_METRIC_LABELS: dict[Metric, str] = {
-    Metric.REVENUE: "营业收入",
-    Metric.NET_PROFIT: "净利润",
-    Metric.GROSS_MARGIN: "毛利率",
-    Metric.RD_EXPENSE: "研发费用",
-    Metric.OPERATING_CASH_FLOW: "经营性现金流",
-}
 
 
 def format_fact_value(value: Decimal, unit: str) -> str:
     if unit == "%":
         return f"{value}%"
+    if unit in {"元/股", "元每股"}:
+        return f"{value}元/股"
     if abs(value) >= Decimal("1e8"):
         return f"{format((value / Decimal('1e8')).normalize(), 'f')}亿元"
     if abs(value) >= Decimal("1e4"):
@@ -35,7 +30,7 @@ def format_fact_value(value: Decimal, unit: str) -> str:
 
 def format_fact_line(fact: FinancialFact) -> str:
     """Self-contained one-line rendering of a fact (company + period + metric + value)."""
-    label = _METRIC_LABELS[fact.metric]
+    label = metric_label(fact.metric)
     return f"{fact.company} {fact.period.label} {label}({fact.value_type.value}) = {format_fact_value(fact.value, fact.unit)}"
 
 
@@ -78,9 +73,9 @@ def load_structured_context(facts_path: str | Path, aliases_path: str | Path) ->
     aliases_path = Path(aliases_path)
     if not facts_path.exists() or not aliases_path.exists():
         return None, None
-    from src.evaluation.structured_eval import build_store_from_facts_jsonl
+    from src.evaluation.structured_eval import build_store_from_facts_asset
     from src.utils.io import read_json
 
-    store = build_store_from_facts_jsonl(facts_path)
+    store = build_store_from_facts_asset(facts_path)
     aliases = read_json(aliases_path)
     return store, aliases

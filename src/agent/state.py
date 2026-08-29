@@ -43,6 +43,34 @@ class AgentState(TypedDict, total=False):
     sub_questions: list[dict[str, Any]]  # [{"id": "q1", "query": "...", "required_fields": []}]
     sub_question_results: list[dict[str, Any]]
     structured_facts: list[dict[str, Any]]
+    dependency_edges: list[dict[str, Any]]
+    dependency_coverage: dict[str, Any]
+    coverage_report: dict[str, Any]
+    deterministic_conclusion_allowed: bool
+    partial_answer: bool
+
+    # unified single/multi-hop reasoning plan (Phase B)
+    reasoning_plan: dict[str, Any] | None
+    reasoning_step_results: list[dict[str, Any]]
+    reasoning_step_artifacts: dict[str, dict[str, Any]]
+    pending_reasoning_step: dict[str, Any] | None
+    pending_step_observation: dict[str, Any] | None
+    reasoning_plan_complete: bool
+    reasoning_coverage: dict[str, Any]
+    reasoning_conclusion: dict[str, Any] | None
+
+    # controlled financial tools (M3)
+    pending_tool_plan: dict[str, Any] | None
+    pending_tool_observation: dict[str, Any] | None
+    tool_calls: list[dict[str, Any]]
+    tool_call_keys: set[str]
+    tool_call_count: int
+    tool_outcome: str
+    consecutive_empty_tool_results: int
+    trajectory_events: list[dict[str, Any]]
+    calculations: dict[str, dict[str, Any]]
+    calculation_intent: dict[str, Any] | None
+    calculation_facts: dict[str, dict[str, Any]]
 
     # generation
     draft_answer: dict[str, Any] | None
@@ -50,6 +78,10 @@ class AgentState(TypedDict, total=False):
 
     # claim-level provenance (P7)
     claims: list[dict[str, Any]]  # [{"claim_id", "text", "claim_type", "evidence_ids", "calculation_id", "parent_claim_ids", "supported"}]
+    claim_verifications: list[dict[str, Any]]
+    claim_verification_summary: dict[str, Any]
+    claim_retrieval_count: int
+    claim_llm_judge_count: int
 
     # budgets / counters
     step_count: int
@@ -90,9 +122,37 @@ def new_agent_state(*, query: str, domain_hint: str = "", question_type: str = "
         sub_questions=[],
         sub_question_results=[],
         structured_facts=[],
+        dependency_edges=[],
+        dependency_coverage={},
+        coverage_report={},
+        deterministic_conclusion_allowed=True,
+        partial_answer=False,
+        reasoning_plan=None,
+        reasoning_step_results=[],
+        reasoning_step_artifacts={},
+        pending_reasoning_step=None,
+        pending_step_observation=None,
+        reasoning_plan_complete=False,
+        reasoning_coverage={},
+        reasoning_conclusion=None,
+        pending_tool_plan=None,
+        pending_tool_observation=None,
+        tool_calls=[],
+        tool_call_keys=set(),
+        tool_call_count=0,
+        tool_outcome="",
+        consecutive_empty_tool_results=0,
+        trajectory_events=[],
+        calculations={},
+        calculation_intent=None,
+        calculation_facts={},
         draft_answer=None,
         support_validation=None,
         claims=[],
+        claim_verifications=[],
+        claim_verification_summary={},
+        claim_retrieval_count=0,
+        claim_llm_judge_count=0,
         step_count=0,
         retrieval_count=0,
         rewrite_count=0,

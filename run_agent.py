@@ -12,6 +12,7 @@ from pathlib import Path
 
 from src.agent.config import AgentConfig
 from src.agent.graph import run_agentic_rag
+from src.agent.llm_claim_judge import build_claim_llm_judge
 
 
 def parse_args() -> argparse.Namespace:
@@ -33,12 +34,40 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--llm-model", default="")
     parser.add_argument("--facts-path", type=Path, default=Path("data/structured/facts_dev.jsonl"))
     parser.add_argument("--company-aliases-path", type=Path, default=Path("data/structured/company_aliases.json"))
-    parser.add_argument("--max-steps", type=int, default=12)
-    parser.add_argument("--max-retrieval-rounds", type=int, default=3)
+    parser.add_argument("--max-steps", type=int, default=AgentConfig().max_steps)
+    parser.add_argument(
+        "--max-retrieval-rounds",
+        type=int,
+        default=AgentConfig().max_retrieval_rounds,
+    )
     parser.add_argument("--max-query-rewrites", type=int, default=2)
     parser.add_argument("--max-generation-attempts", type=int, default=2)
     parser.add_argument("--max-llm-calls", type=int, default=6)
+    parser.add_argument(
+        "--claim-llm-budget",
+        type=int,
+        default=AgentConfig().claim_llm_budget,
+        help="Maximum qualitative claim-judge calls; 0 keeps deterministic-only verification.",
+    )
+    parser.add_argument(
+        "--legacy-retrieval-graph",
+        action="store_true",
+        help="Disable controlled tool orchestration and use the pre-M3 retrieval graph.",
+    )
     return parser.parse_args()
+
+
+def build_agent_config(args: argparse.Namespace) -> AgentConfig:
+    """Map CLI controls into the one graph configuration object."""
+    return AgentConfig(
+        max_steps=args.max_steps,
+        max_retrieval_rounds=args.max_retrieval_rounds,
+        max_query_rewrites=args.max_query_rewrites,
+        max_generation_attempts=args.max_generation_attempts,
+        max_llm_calls=args.max_llm_calls,
+        claim_llm_budget=args.claim_llm_budget,
+        enable_tool_orchestration=not args.legacy_retrieval_graph,
+    )
 
 
 def main() -> int:
@@ -67,24 +96,27 @@ def main() -> int:
         cache_dir=args.model_cache_dir.resolve(),
         device=args.device or "cuda",
     )
-    config = AgentConfig(
-        max_steps=args.max_steps,
-        max_retrieval_rounds=args.max_retrieval_rounds,
-        max_query_rewrites=args.max_query_rewrites,
-        max_generation_attempts=args.max_generation_attempts,
-        max_llm_calls=args.max_llm_calls,
+    config = build_agent_config(args)
+    llm = getattr(answerer, "llm", None)
+    if llm is None:
+        raise ValueError("agentic-rag mode requires an answerer exposing the generic `llm` provider.")
+    llm_judge = build_claim_llm_judge(
+        llm,
+        budget=config.claim_llm_budget,
+        max_tokens=config.claim_max_tokens,
     )
     fact_store, company_aliases = load_structured_context(args.facts_path, args.company_aliases_path)
     final_state = run_agentic_rag(
         runtime=runtime,
         answerer=answerer,
-        llm=answerer.llm,
+        llm=llm,
         config=config,
         query=args.query,
         domain_hint=args.domain_hint,
         question_type=args.question_type,
         fact_store=fact_store,
         company_aliases=company_aliases,
+        llm_judge=llm_judge,
     )
     print(
         json.dumps(
@@ -103,6 +135,8 @@ def main() -> int:
                 },
                 "rewritten_queries": final_state.get("rewritten_queries"),
                 "retrieval_history": final_state.get("retrieval_history"),
+                "tool_calls": final_state.get("tool_calls"),
+                "trajectory_events": final_state.get("trajectory_events"),
             },
             ensure_ascii=False,
             indent=2,

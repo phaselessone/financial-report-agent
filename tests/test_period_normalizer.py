@@ -38,6 +38,9 @@ class TestNormalizePeriod(unittest.TestCase):
     def test_q1_lower(self) -> None:
         self.assertEqual(normalize_period("2025q1"), Period(PeriodType.Q1, 2025))
 
+    def test_q2_coordinate_is_supported(self) -> None:
+        self.assertEqual(normalize_period("2025年二季度单季"), Period(PeriodType.Q2, 2025))
+
     def test_q3_cn(self) -> None:
         self.assertEqual(normalize_period("2025年第三季度"), Period(PeriodType.Q3, 2025))
 

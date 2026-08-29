@@ -1,10 +1,28 @@
-"""Agentic RAG package (checklist v3.0 §P2): Retrieve→Grade→Rewrite→Retrieve→Generate→Verify→Final.
+"""Financial-report agent package.
 
-Single serial graph, local CPU orchestration, remote LLM API only. No Planner,
-no query decomposition, no parallel research, no memory, no Multi-Agent.
+The graph keeps the deterministic retrieve/grade/rewrite fallback while also
+supporting bounded query decomposition, structured fact lookup, calculation
+provenance, claim verification, and a whitelist-controlled tool loop.  The
+package does not permit arbitrary code or dynamic network/tool execution.
 """
 
 from src.agent.config import AgentConfig
+from src.agent.reasoning_plan import (
+    ReasoningPlan,
+    ReasoningStep,
+    ReasoningStepKind,
+    StepResult,
+    StepStatus,
+)
 from src.agent.state import AgentState, new_agent_state
 
-__all__ = ["AgentConfig", "AgentState", "new_agent_state"]
+__all__ = [
+    "AgentConfig",
+    "AgentState",
+    "ReasoningPlan",
+    "ReasoningStep",
+    "ReasoningStepKind",
+    "StepResult",
+    "StepStatus",
+    "new_agent_state",
+]

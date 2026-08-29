@@ -1,9 +1,9 @@
 """Period normalizer (checklist v3.0 §P5).
 
-Maps raw period mentions ("2025年一季度", "25Q1", "2025H1", "2025年全年",
+Maps raw period mentions ("2025年一季度", "25Q1", "2025Q2", "2025H1", "2025年全年",
 "FY2025") to a canonical :class:`~src.structured.schema.Period`. V1 kinds:
-FY / Q1 / H1 / Q3. Returns None when the period is ambiguous, out of V1
-scope (e.g. Q2 / Q4), a multi-year range, or unresolvable without an anchor
+FY / Q1 / Q2 / H1 / Q3. Q2 basis ambiguity is resolved by the structured
+query layer. Returns None for out-of-scope Q4, a multi-year range, or unresolvable without an anchor
 year. Pure local function, no LLM.
 """
 
@@ -19,14 +19,12 @@ _TWO_DIGIT_YEAR_RE = re.compile(r"(?<!\d)(\d{2})(?=[qQhH]\d)")
 _TWO_DIGIT_YEAR_CN_RE = re.compile(r"(?<!\d)(\d{2})\s*年")
 
 _Q1_MARKERS = ("q1", "一季度", "第一季度", "一季报", "1-3月")
+_Q2_MARKERS = ("q2", "二季度", "第二季度")
 _H1_MARKERS = ("h1", "上半年", "半年报", "1-6月")
 _Q3_MARKERS = ("q3", "三季度", "第三季度", "前三季度", "三季报", "7-9月")
 _FY_MARKERS = ("年度", "财年", "fy", "全年", "年报")
 
 _OUT_OF_SCOPE_MARKERS = (
-    "q2",
-    "二季度",
-    "第二季度",
     "q4",
     "四季度",
     "第四季度",
@@ -71,6 +69,8 @@ def normalize_period(raw: str, *, anchor_year: int | None = None) -> Period | No
     kind: PeriodType | None = None
     if any(marker in compact for marker in _Q1_MARKERS):
         kind = PeriodType.Q1
+    elif any(marker in compact for marker in _Q2_MARKERS):
+        kind = PeriodType.Q2
     elif any(marker in compact for marker in _H1_MARKERS):
         kind = PeriodType.H1
     elif any(marker in compact for marker in _Q3_MARKERS):

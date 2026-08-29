@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Synthetic hard-case contract benchmark",
+  "type": "object",
+  "required": ["case_id", "category", "question", "evidence", "gold_answer", "required_claims", "required_evidence_ids", "must_abstain", "synthetic", "review_status"],
+  "properties": {
+    "case_id": {"type": "string", "pattern": "^HC-[A-Z0-9_]+-[0-9]{2}$"},
+    "category": {"type": "string", "enum": ["simple_factual", "numeric_disambiguation", "cross_report_comparison", "derived_calculation", "multi_hop", "rewrite_required", "misleading_top_1", "conflicting_evidence", "must_abstain", "partial_answer"]},
+    "question": {"type": "string", "minLength": 1},
+    "evidence": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["evidence_id", "text", "source"], "properties": {"evidence_id": {"type": "string"}, "text": {"type": "string"}, "source": {"type": "string"}}, "additionalProperties": false}},
+    "gold_answer": {"type": "string"},
+    "acceptable_answers": {"type": "array", "items": {"type": "string"}},
+    "required_claims": {"type": "array", "items": {"type": "string"}},
+    "required_facts": {"type": "array", "items": {"type": "object"}},
+    "required_evidence_ids": {"type": "array", "items": {"type": "string"}},
+    "required_tools": {"type": "array", "items": {"type": "string"}},
+    "allowed_variants": {"type": "array", "items": {"type": "string"}},
+    "notes": {"type": "string"},
+    "required_trace_event": {"type": ["string", "null"]},
+    "must_abstain": {"type": "boolean"},
+    "partial_credit": {"type": "boolean"},
+    "synthetic": {"const": true},
+    "review_status": {"const": "synthetic_not_human_reviewed"}
+  },
+  "additionalProperties": false
+}

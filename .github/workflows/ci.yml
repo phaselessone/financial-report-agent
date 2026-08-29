@@ -1,0 +1,64 @@
+name: deterministic-ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-regression:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: requirements.lock
+      - name: Install exact locked dependencies
+        run: uv pip install --system --torch-backend cpu -r requirements.lock
+      - name: Validate installed dependency closure
+        run: uv pip check --system
+      - name: Enter deterministic offline test mode
+        shell: bash
+        run: |
+          echo 'MODEL_OFFLINE=1' >> "$GITHUB_ENV"
+          echo 'TRANSFORMERS_OFFLINE=1' >> "$GITHUB_ENV"
+          echo 'HF_HUB_OFFLINE=1' >> "$GITHUB_ENV"
+          echo 'HF_DATASETS_OFFLINE=1' >> "$GITHUB_ENV"
+          echo 'PIP_NO_INDEX=1' >> "$GITHUB_ENV"
+          echo 'NO_PROXY=*' >> "$GITHUB_ENV"
+          echo 'no_proxy=*' >> "$GITHUB_ENV"
+      - name: Compile Python sources
+        run: |
+          python -m compileall -q src scripts
+          python -c "import pathlib, py_compile; [py_compile.compile(str(path), doraise=True) for path in pathlib.Path('.').glob('*.py')]"
+      - name: Lint maintained CI and evaluation surface
+        run: python -m ruff check .
+      - name: Check formatting of maintained CI and evaluation surface
+        run: python -m ruff format --check .
+      - name: Strict RunIdentity and benchmark-profile mismatch gate
+        run: python -m pytest -q tests/test_eval_bundle.py tests/test_run_agent_eval.py tests/test_run_metadata.py
+      - name: Evidence-integrity and observability gate
+        run: python -m pytest -q tests/test_evidence_integrity.py tests/test_phase_g_cli.py
+      - name: Real-graph strict observability smoke
+        run: python scripts/strict_observability_smoke.py --output-root outputs/strict_observability_smoke
+      - name: Deterministic unit and integration suite
+        run: python -m pytest -q --ignore=tests/test_full_seed_restore.py
+      - name: Balanced hard-case subset contract
+        run: python scripts/hard_case_subset_gate.py --per-category 1
+      - name: Provider-free four-profile execution contract
+        run: python run_profile_ablation.py --cases-path benchmarks/hard_cases/cases.jsonl --allow-synthetic-contract --contract-oracle --offline-contract --output-root outputs/profile_ablation_contract
+      - name: Phase 0 deterministic smoke
+        run: python scripts/phase0_gate.py smoke

@@ -16,6 +16,7 @@ from src.evaluation.claim_eval import (
     analyze_claims_from_state,
     build_claim_eval_summary,
     critical_claim_ids,
+    evaluate_claim_verification,
     is_critical_claim,
 )
 
@@ -28,11 +29,42 @@ def _claim(text, *, supported=True, claim_type="EXTRACTED", claim_id="claim-1"):
         "evidence_ids": ["c1"],
         "calculation_id": None,
         "parent_claim_ids": [],
+        "verification": {
+            "status": "ENTAILED" if supported else "INSUFFICIENT",
+            "method": "test",
+            "score": 1.0 if supported else 0.0,
+            "reasons": ["fixture"],
+        },
         "supported": supported,
     }
 
 
 class ClaimEvalMetricsTests(unittest.TestCase):
+    def test_reviewed_claim_verification_compares_status_and_evidence_independently(self) -> None:
+        gold_claims = [
+            {
+                "claim_id": "g-1",
+                "text": "营收增加 20 亿元",
+                "status": "ENTAILED",
+                "evidence_ids": ["e-2025", "e-2024"],
+            }
+        ]
+        predicted_claims = [
+            {
+                "claim_id": "g-1",
+                "text": "营收增加 20 亿元",
+                "evidence_ids": ["e-2025"],
+                "verification": {"status": "ENTAILED"},
+            }
+        ]
+
+        metrics = evaluate_claim_verification(predicted_claims, gold_claims)
+
+        self.assertEqual(metrics["claim_status_accuracy"], 1.0)
+        self.assertEqual(metrics["claim_evidence_accuracy"], 0.0)
+        self.assertEqual(metrics["claim_verification_accuracy"], 0.0)
+        self.assertEqual(metrics["evaluated_claim_count"], 1)
+
     def test_is_critical_marked_for_numeric_or_first_claim(self) -> None:
         c_numeric = _claim("营收1234亿元", claim_id="claim-1")
         c_text = _claim("机构看好增长", claim_id="claim-2")
@@ -64,6 +96,9 @@ class ClaimEvalMetricsTests(unittest.TestCase):
         self.assertEqual(metrics["claim_count"], 3)
         self.assertEqual(metrics["supported_count"], 2)
         self.assertEqual(metrics["claim_support_precision"], 2 / 3)
+        self.assertEqual(metrics["claim_entailment_yield"], 2 / 3)
+        self.assertEqual(metrics["metric_scope"], "process")
+        self.assertFalse(any("accuracy" in key for key in metrics))
         # critical = claim-1 (numeric) and claim-2 (numeric); both supported
         self.assertEqual(metrics["critical_count"], 2)
         self.assertEqual(metrics["critical_supported"], 2)
@@ -113,6 +148,8 @@ class ClaimEvalMetricsTests(unittest.TestCase):
         summary = build_claim_eval_summary(rows)
         self.assertEqual(summary["queries"], 2)
         self.assertEqual(summary["claim_support_precision"], 0.75)  # avg
+        self.assertEqual(summary["claim_entailment_yield"], 0.75)
+        self.assertEqual(summary["metric_scope"], "process")
         self.assertEqual(summary["critical_claim_support_rate"], 0.5)
         self.assertEqual(summary["derived_consistent_rate"], 0.5)
         self.assertEqual(summary["total_claims"], 6)

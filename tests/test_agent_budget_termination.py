@@ -190,7 +190,11 @@ class BudgetAndTerminationTests(unittest.TestCase):
             runtime=runtime,
             answerer=answerer,
             llm=llm,
-            config=AgentConfig(max_failed_rewrite_rounds=2, max_steps=12),
+            config=AgentConfig(
+                max_failed_rewrite_rounds=2,
+                max_steps=12,
+                strict_claim_verification=False,
+            ),
             query="比较A公司和B公司的策略差异",
         )
         # first post-rewrite grade failed (strike 1 <= 2), second rewrite recovered

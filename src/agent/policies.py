@@ -126,6 +126,41 @@ def record_llm_response(state: dict[str, Any], response: LLMResponse, *, node: s
     )
 
 
+def record_llm_failure(
+    state: dict[str, Any],
+    *,
+    node: str,
+    provider: str,
+    model: str,
+    error_type: str,
+    latency_ms: float = 0.0,
+    retries: int = 0,
+) -> None:
+    """Record a provider call that failed before returning usage metadata.
+
+    The attempt counts as an LLM call, while token fields stay zero because no
+    provider response exists from which usage could be truthfully recovered.
+    """
+    state["llm_call_count"] = int(state.get("llm_call_count", 0)) + 1
+    state.setdefault("llm_calls_log", []).append(
+        {
+            "step_count": int(state.get("step_count", 0)),
+            "node": node,
+            "provider": str(provider or "unknown"),
+            "model": str(model or "unknown"),
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "latency_ms": float(latency_ms or 0.0),
+            "retries": int(retries or 0),
+            "request_id": "",
+            "finish_reason": "",
+            "status": "FAILED",
+            "error_type": str(error_type or "LLMProviderError"),
+        }
+    )
+
+
 def token_budget_exceeded(state: dict[str, Any], config: Any) -> bool:
     """Token-level budget guard (config.max_total_tokens; 0 = disabled).
 

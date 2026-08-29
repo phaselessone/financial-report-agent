@@ -9,11 +9,37 @@ from typing import Any
 from src.utils.io import write_json
 
 SOURCE_MANIFEST_INCLUDE_DIRS = ("src", "tests", "scripts", "bootstrap")
-SOURCE_MANIFEST_INCLUDE_GLOBS = ("run_*.py", "Makefile", "requirements*.txt", ".env.example")
+SOURCE_MANIFEST_INCLUDE_GLOBS = (
+    "run_*.py",
+    "Makefile",
+    "requirements*.txt",
+    "requirements.lock",
+    ".env.example",
+)
+SOURCE_MANIFEST_EXCLUDED_DIRS = {"__pycache__", ".pytest_cache"}
+SOURCE_MANIFEST_EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
+SOURCE_MANIFEST_HASH_POLICY = "text-lf-normalized-v1"
+CANONICAL_BENCHMARK_PROFILES = (
+    "current-dev",
+    "historical-full-core",
+    "historical-full-raw",
+)
+LEGACY_BENCHMARK_PROFILE_ALIASES = {"historical-full": "historical-full-raw"}
+
+
+def normalize_benchmark_profile(profile: str) -> str:
+    """Normalize the one legacy full profile alias used by old artifacts."""
+
+    value = str(profile or "").strip()
+    return LEGACY_BENCHMARK_PROFILE_ALIASES.get(value, value)
 
 
 def _sha1_hexdigest(payload: bytes) -> str:
     return hashlib.sha1(payload).hexdigest()
+
+
+def _sha256_hexdigest(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
 
 
 def file_sha1(path: Path) -> str:
@@ -22,6 +48,12 @@ def file_sha1(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _source_manifest_bytes(path: Path) -> bytes:
+    """Return checkout-stable bytes for files in the text-only source scope."""
+
+    return path.read_bytes().replace(b"\r\n", b"\n")
 
 
 def rows_sha1(rows: list[dict[str, Any]]) -> str:
@@ -51,9 +83,15 @@ def _iter_source_files(cwd: Path) -> list[Path]:
         if not root.exists():
             continue
         for path in root.rglob("*"):
-            if path.is_file():
-                rel_path = path.relative_to(cwd).as_posix()
-                files.setdefault(rel_path, path)
+            relative_parts = path.relative_to(root).parts
+            if not path.is_file():
+                continue
+            if SOURCE_MANIFEST_EXCLUDED_DIRS.intersection(relative_parts):
+                continue
+            if path.suffix.lower() in SOURCE_MANIFEST_EXCLUDED_SUFFIXES:
+                continue
+            rel_path = path.relative_to(cwd).as_posix()
+            files.setdefault(rel_path, path)
     for pattern in SOURCE_MANIFEST_INCLUDE_GLOBS:
         for path in cwd.glob(pattern):
             if path.is_file():
@@ -66,16 +104,21 @@ def build_source_manifest(*, cwd: Path | None = None) -> dict[str, Any]:
     root = (cwd or Path.cwd()).resolve()
     entries: list[dict[str, Any]] = []
     for path in _iter_source_files(root):
+        canonical_bytes = _source_manifest_bytes(path)
         entries.append(
             {
                 "path": path.relative_to(root).as_posix(),
-                "sha1": file_sha1(path),
-                "size_bytes": path.stat().st_size,
+                "sha1": _sha1_hexdigest(canonical_bytes),
+                "size_bytes": len(canonical_bytes),
             }
         )
+    canonical_entries = json.dumps(entries, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     manifest_digest = rows_sha1(entries) if entries else _sha1_hexdigest(b"")
+    manifest_hash = _sha256_hexdigest(canonical_entries)
     return {
         "source_manifest_id": f"source:{manifest_digest[:12]}",
+        "source_manifest_hash": manifest_hash,
+        "hash_policy": SOURCE_MANIFEST_HASH_POLICY,
         "source_root": str(root),
         "file_count": len(entries),
         "files": entries,
@@ -112,10 +155,16 @@ def build_run_metadata(
     elif not git_sha:
         source_manifest = build_source_manifest(cwd=resolved_cwd)
 
+    normalized_profile = normalize_benchmark_profile(benchmark_profile)
     metadata = {
         "split": split,
         "benchmark_label": benchmark_label,
-        "benchmark_profile": benchmark_profile,
+        "benchmark_profile": normalized_profile,
+        "benchmark_profile_contract": {
+            "canonical_profiles": list(CANONICAL_BENCHMARK_PROFILES),
+            "legacy_aliases": dict(LEGACY_BENCHMARK_PROFILE_ALIASES),
+            "metric_merge_policy": "forbid_cross_profile_merge",
+        },
         "benchmark_id": f"benchmark:{benchmark_rows_sha1[:12]}",
         "benchmark_source_path": str(benchmark_source_path),
         "benchmark_source_sha1": benchmark_source_sha1,
@@ -128,6 +177,7 @@ def build_run_metadata(
     }
     if source_manifest is not None:
         metadata["source_manifest_id"] = source_manifest["source_manifest_id"]
+        metadata["source_manifest_hash"] = source_manifest["source_manifest_hash"]
         metadata["source_file_count"] = source_manifest["file_count"]
         if source_manifest_path is not None:
             metadata["source_manifest_path"] = str(source_manifest_path)

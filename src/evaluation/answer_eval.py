@@ -5,12 +5,144 @@ from pathlib import Path
 from typing import Any
 
 from src.evaluation.benchmark_assets import build_doc_manifest, short_title_from_file_name
-from src.utils.io import read_jsonl, write_json, write_jsonl
+from src.evaluation.run_identity import RunIdentity
+from src.utils.io import read_json, read_jsonl, write_json, write_jsonl
 from src.utils.text_utils import extract_numeric_tokens, extract_terms, normalize_for_match, normalize_text
+
+
+BENCHMARK_PROFILE_CONTRACT = {
+    "canonical_profiles": ["current-dev", "historical-full-core", "historical-full-raw"],
+    "legacy_aliases": {"historical-full": "historical-full-raw"},
+    "metric_merge_policy": "forbid_cross_profile_merge",
+}
 
 
 def _normalize_answer_eval_profile(profile: str) -> str:
     return "historical-full-raw" if profile == "historical-full" else profile
+
+
+def _metadata_run_identity(run_metadata: dict[str, Any] | None) -> RunIdentity | None:
+    if not run_metadata or not run_metadata.get("run_identity"):
+        return None
+    identity = RunIdentity.from_dict(run_metadata["run_identity"])
+    metadata_run_id = str(run_metadata.get("run_id") or identity.run_id)
+    if metadata_run_id != identity.run_id:
+        raise ValueError("run_metadata run_id does not match run_identity")
+    metadata_profile = _normalize_answer_eval_profile(
+        str(run_metadata.get("benchmark_profile") or identity.benchmark_profile)
+    )
+    if metadata_profile != identity.benchmark_profile:
+        raise ValueError("run_metadata benchmark_profile does not match run_identity")
+    return identity
+
+
+def bind_answer_eval_run_identity(
+    result_rows: list[dict[str, Any]],
+    run_metadata: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Return detached result rows bound to one canonical evaluation identity."""
+
+    identity = _metadata_run_identity(run_metadata)
+    if identity is None:
+        return [dict(row) for row in result_rows]
+    identity_row = identity.to_dict()
+    bound_rows: list[dict[str, Any]] = []
+    for row in result_rows:
+        existing_profile = str(row.get("benchmark_profile") or "").strip()
+        if existing_profile and _normalize_answer_eval_profile(existing_profile) != identity.benchmark_profile:
+            raise ValueError("result benchmark_profile does not match run_identity")
+        existing_run_id = str(row.get("run_id") or "").strip()
+        if existing_run_id and existing_run_id != identity.run_id:
+            raise ValueError("result run_id does not match run_identity")
+        existing_identity = row.get("run_identity")
+        if existing_identity is not None and existing_identity != identity_row:
+            raise ValueError("result run_identity does not match run_metadata")
+        bound_rows.append(
+            {
+                **row,
+                "benchmark_profile": identity.benchmark_profile,
+                "run_id": identity.run_id,
+                "run_identity": identity_row,
+            }
+        )
+    return bound_rows
+
+
+def _validate_answer_eval_result_profile(
+    row: dict[str, Any],
+    *,
+    benchmark_profile: str,
+) -> None:
+    expected_profile = _normalize_answer_eval_profile(str(benchmark_profile or "").strip())
+    if not expected_profile:
+        raise ValueError("benchmark_profile is required when reading answer evaluation results")
+    raw_identity = row.get("run_identity")
+    identity = RunIdentity.from_dict(raw_identity) if raw_identity is not None else None
+    row_profile = _normalize_answer_eval_profile(str(row.get("benchmark_profile") or "").strip())
+    if identity is not None:
+        if row_profile and row_profile != identity.benchmark_profile:
+            raise ValueError("result benchmark_profile does not match run_identity")
+        row_run_id = str(row.get("run_id") or "").strip()
+        if row_run_id and row_run_id != identity.run_id:
+            raise ValueError("result run_id does not match run_identity")
+        row_profile = identity.benchmark_profile
+    elif expected_profile != "current-dev":
+        raise ValueError("historical answer evaluation result requires run_identity")
+    else:
+        row_profile = row_profile or "current-dev"
+    if row_profile != expected_profile:
+        raise ValueError(
+            "result benchmark_profile mismatch: "
+            f"expected={expected_profile}, actual={row_profile or 'missing'}"
+        )
+
+
+def read_answer_eval_results(
+    path: Path,
+    *,
+    benchmark_profile: str,
+) -> list[dict[str, Any]]:
+    """Read result rows only when every row belongs to the expected profile."""
+
+    rows = read_jsonl(path)
+    for row in rows:
+        _validate_answer_eval_result_profile(row, benchmark_profile=benchmark_profile)
+    return rows
+
+
+def read_answer_eval_summary(
+    path: Path,
+    *,
+    benchmark_profile: str,
+) -> dict[str, Any]:
+    """Read one summary only when its full identity matches the expected profile."""
+
+    summary = read_json(path)
+    if not isinstance(summary, dict):
+        raise ValueError("answer evaluation summary must be a JSON object")
+    identity_row = dict(summary)
+    metadata = summary.get("metadata")
+    if isinstance(metadata, dict):
+        for key in ("benchmark_profile", "run_id", "run_identity"):
+            if key not in identity_row and key in metadata:
+                identity_row[key] = metadata[key]
+    _validate_answer_eval_result_profile(identity_row, benchmark_profile=benchmark_profile)
+    return summary
+
+
+def merge_answer_eval_results(
+    result_sets: list[list[dict[str, Any]]],
+    *,
+    benchmark_profile: str,
+) -> list[dict[str, Any]]:
+    """Merge only result sets whose rows all belong to one explicit profile."""
+
+    merged: list[dict[str, Any]] = []
+    for rows in result_sets:
+        for row in rows:
+            _validate_answer_eval_result_profile(row, benchmark_profile=benchmark_profile)
+            merged.append(dict(row))
+    return merged
 
 
 def _materialize_answer_eval_seed(
@@ -197,6 +329,7 @@ def materialize_answer_eval_sets(
     report = {
         "requested_splits": list(active_splits),
         "available_splits": sorted(materialized_sets),
+        "benchmark_profile_contract": dict(BENCHMARK_PROFILE_CONTRACT),
         "splits": report_splits,
     }
     write_json(report_output_path, report)
@@ -301,6 +434,7 @@ def evaluate_answer_results(
     abstain_badcase_output_path: Path,
     run_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    result_rows = bind_answer_eval_run_identity(result_rows, run_metadata)
     write_jsonl(results_output_path, result_rows)
     chunk_lookup = {row["chunk_id"]: row for row in read_jsonl(chunks_path)}
     results_by_id = {row["question_id"]: row for row in result_rows}
@@ -621,6 +755,11 @@ def build_answer_eval_summary(
     }
     if run_metadata is not None:
         summary["metadata"] = run_metadata
+        identity = _metadata_run_identity(run_metadata)
+        if identity is not None:
+            summary["benchmark_profile"] = identity.benchmark_profile
+            summary["run_id"] = identity.run_id
+            summary["run_identity"] = identity.to_dict()
     return summary
 
 

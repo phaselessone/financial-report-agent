@@ -20,7 +20,7 @@ from src.llm.types import LLMProviderError, LLMResponse
 from src.llm.usage import summarize_usage
 from src.structured.fact_normalizer import match_metric, normalize_company_name
 from src.structured.period_normalizer import normalize_period
-from src.structured.schema import FinancialFact, Metric, ValueType
+from src.structured.schema import FinancialFact, Metric, PeriodBasis, PeriodType, ValueType
 from src.structured.unit_normalizer import normalize_fact_value
 from src.structured.value_type import classify_value_type
 from src.utils.text_utils import normalize_text
@@ -34,18 +34,26 @@ SYSTEM_PROMPT = (
 _USER_INSTRUCTIONS = """Extract financial facts as a JSON object {"facts": [...]}.
 Each fact must have these fields:
 - "company": Chinese company name
-- "metric": one of revenue | net_profit | gross_margin | rd_expense | operating_cash_flow
-  (营收/营业收入 -> revenue, 净利润/归母净利润 -> net_profit, 毛利率 -> gross_margin,
-   研发费用/研发投入 -> rd_expense, 经营性现金流 -> operating_cash_flow)
+- "metric": one of the registered metrics: revenue | net_profit | gross_margin |
+  rd_expense | operating_cash_flow | operating_profit | gross_profit | eps |
+  net_margin | roe | roa | total_assets | total_liabilities | inventory |
+  accounts_receivable | interest_bearing_debt | capex | free_cash_flow.
+  Use the metric registry aliases (营业收入/营收, 净利润, 毛利率, 研发费用,
+  经营性现金流, 营业利润, 毛利, 每股收益, 净利率, 净资产收益率, 总资产,
+  总负债, 存货, 应收账款, 有息负债, 资本开支, 自由现金流).
 - "period": the period exactly as written (e.g. "2025年一季度", "2025年全年", "FY2025")
 - "value_raw": the exact numeric string WITH its unit (e.g. "123.4亿元", "25%", "5,678万元")
-- "value_type": actual | forecast | unknown (预计/预期/目标/指引 -> forecast; 实现/同比增长 -> actual)
+- "value_type": actual | forecast | adjusted | unknown (预计/预期/目标/指引 -> forecast;
+  经调整/调整后/Non-GAAP -> adjusted; 实现/同比增长 -> actual)
+- "period_basis": standalone | cumulative | null. Q2 facts must state whether
+  the value is a standalone quarter or cumulative year-to-date value.
 - "source_span": the exact verbatim substring of the source text that contains the value
 
 Rules:
-- Only extract V1 metrics listed above. Skip other metrics (净利率, 毛利, 增速 etc).
-- gross_margin must use a percentage value (毛利率 25%).
-- Currency metrics (revenue/net_profit/rd_expense/operating_cash_flow) must quote the unit (亿元/万元 etc).
+- Only extract metrics listed above. Skip unregistered metrics and derived rates
+  unless the source explicitly reports the registered metric.
+- gross_margin/net_margin/roe/roa must use a percentage value; eps must use 元/股.
+- Currency metrics must quote a currency unit (亿元/万元/千元 etc).
 - source_span must be copied verbatim from the source text.
 - Skip facts whose value or period cannot be quoted verbatim.
 - Return {"facts": []} when nothing qualifies."""
@@ -82,6 +90,22 @@ def _resolve_value_type(raw: Any, source_span: str) -> ValueType:
     return classify_value_type(source_span)
 
 
+def _resolve_period_basis(raw: Any, period_text: Any) -> PeriodBasis | None:
+    if isinstance(raw, PeriodBasis):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            return PeriodBasis(raw.strip().lower())
+        except ValueError:
+            return None
+    normalized = normalize_text(period_text).lower() if isinstance(period_text, str) else ""
+    if any(marker in normalized for marker in ("单季", "单季度", "standalone")):
+        return PeriodBasis.STANDALONE
+    if any(marker in normalized for marker in ("累计", "年初至今", "ytd", "cumulative")):
+        return PeriodBasis.CUMULATIVE
+    return None
+
+
 def _resolve_company(candidate_company: Any, aliases: Mapping[str, Sequence[str]], company_hint: str) -> str | None:
     company = normalize_company_name(candidate_company, aliases)
     if company:
@@ -115,8 +139,12 @@ def validate_candidate(
     metric = _resolve_metric(candidate.get("metric"))
     if metric is None:
         return None
-    period = normalize_period(candidate.get("period"), anchor_year=anchor_year)
+    period_text = candidate.get("period")
+    period = normalize_period(period_text, anchor_year=anchor_year)
     if period is None:
+        return None
+    period_basis = _resolve_period_basis(candidate.get("period_basis"), period_text)
+    if period.kind is PeriodType.Q2 and period_basis is None:
         return None
     raw_value = _clean_value_raw(candidate.get("value_raw", ""))
     normalized = normalize_fact_value(raw_value, metric)
@@ -147,6 +175,7 @@ def validate_candidate(
             evidence_id=evidence_id,
             raw_value=raw_value,
             source_span=source_span,
+            period_basis=period_basis,
         )
     except ValueError:
         return None

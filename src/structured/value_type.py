@@ -15,6 +15,15 @@ from src.structured.schema import ValueType
 
 _ESTIMATE_YEAR_RE = re.compile(r"(?<!\d)(?:20)?\d{2}\s*[eE](?!\d)")
 
+_ADJUSTED_MARKERS = (
+    "经调整",
+    "调整后",
+    "非公认会计准则",
+    "non-gaap",
+    "non gaap",
+    "adjusted",
+)
+
 _FORECAST_MARKERS = (
     "预计",
     "预期",
@@ -52,6 +61,9 @@ def classify_value_type(source_text: Any) -> ValueType:
     """
     if not isinstance(source_text, str) or not source_text.strip():
         return ValueType.UNKNOWN
+    normalized = source_text.lower()
+    if any(marker in normalized for marker in _ADJUSTED_MARKERS):
+        return ValueType.ADJUSTED
     if _ESTIMATE_YEAR_RE.search(source_text):
         return ValueType.FORECAST
     if any(marker in source_text for marker in _FORECAST_MARKERS):

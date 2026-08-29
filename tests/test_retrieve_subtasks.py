@@ -8,6 +8,8 @@ import unittest
 from decimal import Decimal
 from pathlib import Path
 
+import duckdb
+
 from src.agent.config import AgentConfig
 from src.agent.nodes.retrieve_subtasks import make_retrieve_subtasks
 from src.agent.state import new_agent_state
@@ -18,6 +20,7 @@ from src.structured.agent_bridge import (
 )
 from src.structured.fact_store import FactStore
 from src.structured.schema import FinancialFact, Period
+from src.evaluation.run_identity import file_sha256
 from tests.test_agent_flow import FakeRuntime, make_result, make_row
 
 ALIASES = {"贵州茅台": ["贵州茅台", "茅台"], "五粮液": ["五粮液"]}
@@ -146,6 +149,66 @@ class LoadStructuredContextTests(unittest.TestCase):
             self.assertEqual(aliases, ALIASES)
             self.assertEqual(store.count(), 1)
             store.close()
+
+    def test_legacy_duckdb_snapshot_loads_read_only_without_changing_asset_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            facts_path = Path(tmp) / "facts.duckdb"
+            aliases_path = Path(tmp) / "aliases.json"
+            fact = make_fact()
+            connection = duckdb.connect(str(facts_path))
+            try:
+                connection.execute(
+                    """
+                    CREATE TABLE facts (
+                        fact_id VARCHAR,
+                        company VARCHAR,
+                        metric VARCHAR,
+                        period_kind VARCHAR,
+                        year INTEGER,
+                        value_type VARCHAR,
+                        value VARCHAR,
+                        unit VARCHAR,
+                        doc_id VARCHAR,
+                        page INTEGER,
+                        evidence_id VARCHAR,
+                        raw_value VARCHAR,
+                        source_span VARCHAR
+                    )
+                    """
+                )
+                connection.execute(
+                    "INSERT INTO facts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        fact.fact_id,
+                        fact.company,
+                        fact.metric.value,
+                        fact.period.kind.value,
+                        fact.period.year,
+                        fact.value_type.value,
+                        str(fact.value),
+                        fact.unit,
+                        fact.doc_id,
+                        fact.page,
+                        fact.evidence_id,
+                        fact.raw_value,
+                        fact.source_span,
+                    ],
+                )
+            finally:
+                connection.close()
+            aliases_path.write_text(json.dumps(ALIASES, ensure_ascii=False), encoding="utf-8")
+            before = file_sha256(facts_path)
+
+            store, aliases = load_structured_context(facts_path, aliases_path)
+            try:
+                self.assertEqual(aliases, ALIASES)
+                self.assertEqual(store.count(), 1)
+                loaded = store.query(company=fact.company, metric=fact.metric, period=fact.period)
+                self.assertEqual(loaded, [fact])
+            finally:
+                store.close()
+
+            self.assertEqual(file_sha256(facts_path), before)
 
 
 if __name__ == "__main__":

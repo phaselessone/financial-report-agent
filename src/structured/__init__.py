@@ -10,6 +10,7 @@ from src.structured.schema import (
     FinancialFact,
     Metric,
     Period,
+    PeriodBasis,
     PeriodType,
     PROVENANCE_FIELDS,
     ValueType,
@@ -22,11 +23,31 @@ from src.structured.fact_normalizer import match_metric, normalize_company_name
 from src.structured.fact_extractor import FactExtractionError, FactExtractor, validate_candidate
 from src.structured.fact_store import FactStore
 from src.structured.fact_query import FactQuery, build_structured_answer, detect_query_signature, route
+from src.structured.metric_registry import (
+    MetricSpec,
+    all_metric_specs,
+    extract_metrics,
+    match_metric,
+    metric_allowed_units,
+    metric_dimension,
+    metric_label,
+    metrics_compatible,
+)
+from src.structured.structured_query import (
+    OperandRequirement,
+    StructuredQuery,
+    StructuredQueryResult,
+    build_structured_query,
+    execute_structured_query,
+    parse_structured_query,
+    summarize_structured_result,
+)
 
 __all__ = [
     "FinancialFact",
     "Metric",
     "Period",
+    "PeriodBasis",
     "PeriodType",
     "PROVENANCE_FIELDS",
     "ValueType",
@@ -46,4 +67,19 @@ __all__ = [
     "detect_query_signature",
     "route",
     "build_structured_answer",
+    "MetricSpec",
+    "all_metric_specs",
+    "extract_metrics",
+    "match_metric",
+    "metric_allowed_units",
+    "metric_dimension",
+    "metric_label",
+    "metrics_compatible",
+    "StructuredQuery",
+    "OperandRequirement",
+    "StructuredQueryResult",
+    "build_structured_query",
+    "execute_structured_query",
+    "parse_structured_query",
+    "summarize_structured_result",
 ]

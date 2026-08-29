@@ -1,11 +1,14 @@
 import json
+import os
 import unittest
 from collections import Counter
 from pathlib import Path
 
 from src.evaluation.answer_eval import materialize_answer_eval_sets
+from src.evaluation.historical_evidence_audit import audit_historical_evidence_files
 from src.utils.io import read_json
 from src.utils.io import read_jsonl
+from scripts.phase0_gate import DEFAULT_FULL_ATTESTATION, check_full_seed_assets
 
 
 class FullSeedRestoreTests(unittest.TestCase):
@@ -43,6 +46,32 @@ class FullSeedRestoreTests(unittest.TestCase):
         chunks_path = Path("tmp_stage6_data/chunks/chunks.jsonl")
         if not chunks_path.exists():
             self.skipTest(f"stage6 chunks not found: {chunks_path}")
+
+        expected_chunks_sha256 = os.environ.get("STAGE6_CHUNKS_SHA256", "").strip()
+        self.assertTrue(
+            expected_chunks_sha256,
+            "STAGE6_CHUNKS_SHA256 is required when the external stage6 corpus is present",
+        )
+        full_assets = check_full_seed_assets(
+            self.seed_path,
+            self.artifact_results_path,
+            attestation_path=DEFAULT_FULL_ATTESTATION,
+        )
+        evidence_audit = audit_historical_evidence_files(
+            seed_path=self.seed_path,
+            historical_results_path=self.artifact_results_path,
+            candidate_chunks_path=chunks_path,
+            expected_corpus_sha256=expected_chunks_sha256,
+            reviewed_attestation_validated=(
+                full_assets.get("review_contract_source") == "attestation"
+            ),
+            expected_question_count=50,
+        )
+        self.assertEqual(
+            evidence_audit["status"],
+            "READY",
+            f"stage6 content audit failed: {evidence_audit.get('blocking_reasons')}",
+        )
 
         report_output_path = Path("tmp_stage6_data/eval_set/full_seed_materialization_report.json")
         dev_output_path = Path("tmp_stage6_data/eval_set/full_seed_materialization_dev.jsonl")

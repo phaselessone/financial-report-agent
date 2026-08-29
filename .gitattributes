@@ -1,0 +1,6 @@
+# Hash-bound benchmark and deterministic fixture bytes must not vary with
+# core.autocrlf or the checkout platform.
+benchmarks/**/*.json text eol=lf
+benchmarks/**/*.jsonl text eol=lf
+tests/fixtures/**/*.json text eol=lf
+tests/fixtures/**/*.jsonl text eol=lf

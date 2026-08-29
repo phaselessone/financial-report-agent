@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "reviewed-v1.schema.json",
+  "title": "Human-reviewed hard-case benchmark row",
+  "type": "object",
+  "required": [
+    "case_id",
+    "category",
+    "question",
+    "evidence",
+    "gold_answer",
+    "gold_claims",
+    "gold_calculations",
+    "required_tools",
+    "forbidden_tools",
+    "must_abstain",
+    "partial_answer_gold",
+    "synthetic",
+    "review_status",
+    "reviewer",
+    "review_time",
+    "source_provenance",
+    "benchmark_version"
+  ],
+  "properties": {
+    "case_id": {"type": "string", "minLength": 1},
+    "category": {
+      "type": "string",
+      "enum": [
+        "simple_factual",
+        "numeric_disambiguation",
+        "cross_report_comparison",
+        "derived_calculation",
+        "multi_hop",
+        "rewrite_required",
+        "misleading_top_1",
+        "conflicting_evidence",
+        "must_abstain",
+        "partial_answer"
+      ]
+    },
+    "question": {"type": "string", "minLength": 1},
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["evidence_id", "text", "source", "source_id"],
+        "properties": {
+          "evidence_id": {"type": "string", "minLength": 1},
+          "text": {"type": "string", "minLength": 1},
+          "source": {"type": "string", "minLength": 1},
+          "source_id": {"type": "string", "minLength": 1},
+          "page": {"type": ["integer", "string", "null"]}
+        },
+        "additionalProperties": true
+      }
+    },
+    "gold_answer": {"type": "string"},
+    "gold_claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["claim_id", "text", "status", "evidence_ids"],
+        "properties": {
+          "claim_id": {"type": "string", "minLength": 1},
+          "text": {"type": "string"},
+          "status": {"enum": ["ENTAILED", "CONTRADICTED", "INSUFFICIENT"]},
+          "evidence_ids": {"type": "array", "items": {"type": "string"}}
+        },
+        "additionalProperties": true
+      }
+    },
+    "gold_calculations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["calculation_id", "status", "operation"],
+        "properties": {
+          "calculation_id": {"type": "string", "minLength": 1},
+          "status": {"enum": ["SUCCESS", "FAILED", "INSUFFICIENT", "AMBIGUOUS", "SKIPPED"]},
+          "operation": {"type": "string", "minLength": 1},
+          "formula": {"type": "string"},
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "value"],
+              "properties": {
+                "name": {"type": "string", "minLength": 1},
+                "value": {},
+                "unit": {"type": ["string", "null"]},
+                "evidence_ids": {"type": "array", "items": {"type": "string"}}
+              },
+              "additionalProperties": true
+            }
+          },
+          "evidence_ids": {"type": "array", "items": {"type": "string"}},
+          "result": {
+            "type": "object",
+            "required": ["value"],
+            "properties": {
+              "value": {},
+              "unit": {"type": ["string", "null"]}
+            },
+            "additionalProperties": true
+          },
+          "reason": {"type": "string"}
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"status": {"const": "SUCCESS"}}, "required": ["status"]},
+            "then": {"required": ["inputs", "result"]}
+          }
+        ],
+        "additionalProperties": true
+      }
+    },
+    "required_tools": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "forbidden_tools": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "must_abstain": {"type": "boolean"},
+    "partial_answer_gold": {
+      "type": "object",
+      "required": ["allowed", "required_claim_ids"],
+      "properties": {
+        "allowed": {"type": "boolean"},
+        "required_claim_ids": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "synthetic": {"const": false},
+    "review_status": {"const": "reviewed"},
+    "reviewer": {
+      "oneOf": [
+        {"type": "string", "minLength": 1},
+        {
+          "type": "object",
+          "anyOf": [{"required": ["reviewer_id"]}, {"required": ["name"]}],
+          "properties": {
+            "reviewer_id": {"type": "string", "minLength": 1},
+            "name": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": true
+        }
+      ]
+    },
+    "review_time": {"type": "string", "format": "date-time"},
+    "source_provenance": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/source"}
+    },
+    "benchmark_version": {"type": "string", "minLength": 1},
+    "benchmark_hash": {"$ref": "#/$defs/sha256"},
+    "benchmark_kind": {"const": "reviewed"},
+    "required_facts": {"type": "array", "items": {"type": "object"}},
+    "allowed_variants": {"type": "array", "items": {"type": "string"}},
+    "notes": {"type": "string"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
+    "source": {
+      "type": "object",
+      "required": ["source_id", "sha256"],
+      "properties": {
+        "source_id": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "uri": {"type": "string", "minLength": 1},
+        "path": {"type": "string", "minLength": 1},
+        "document_id": {"type": "string", "minLength": 1}
+      },
+      "anyOf": [{"required": ["uri"]}, {"required": ["path"]}, {"required": ["document_id"]}],
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

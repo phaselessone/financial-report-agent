@@ -5,9 +5,10 @@ by one fact lookup or one document search. The node follows the same LLM-call
 convention as :mod:`src.agent.nodes.rewrite_query`: budget guards first, one
 ``llm.generate`` call, ``record_llm_response``, then ``parse_model_json``.
 
-Decomposition is deterministic-triggered upstream (``is_multi_hop_query``); a
-malformed or empty decomposition degrades to a single sub-question that echoes
-the original query, so the multi-hop path stays correct under LLM failure.
+Decomposition is deterministic-triggered upstream (``is_multi_hop_query``).
+Malformed or empty output fails closed: collapsing a multi-requirement query
+into one whole-query SEARCH would make missing requirements invisible to the
+dependency gate and could incorrectly publish a complete answer.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.agent.config import AgentConfig
+from src.agent.dependency_reasoning import normalize_dependency_edges
 from src.agent.policies import begin_node, record_llm_response, token_budget_exceeded
 from src.generation.payload_parser import parse_model_json
 
@@ -23,7 +25,7 @@ _DECOMPOSE_SYSTEM_PROMPT = (
     "Break the multi-hop question into independent sub-questions, each answerable "
     "by a single fact lookup or a single document search. "
     "Preserve company names, metrics and periods exactly. "
-    'Output one JSON object only: {"sub_questions": [{"id": "q1", "query": "...", "required_fields": []}]}. '
+    'Output one JSON object only: {"sub_questions": [{"id": "q1", "query": "...", "required_fields": [], "depends_on": []}]}. '
     "required_fields lists the evidence kinds each sub-question needs. At most 6 sub-questions."
 )
 
@@ -59,11 +61,17 @@ def parse_sub_questions(
         required = item.get("required_fields")
         if not isinstance(required, list):
             required = []
+        dependencies = item.get("depends_on") or item.get("dependencies") or item.get("parent_ids") or []
+        if isinstance(dependencies, str):
+            dependencies = [dependencies]
+        if not isinstance(dependencies, (list, tuple, set)):
+            dependencies = []
         out.append(
             {
                 "id": str(item.get("id") or f"q{index}"),
                 "query": sub_query,
                 "required_fields": [str(field) for field in required if isinstance(field, str) and field.strip()],
+                "depends_on": [str(dep).strip() for dep in dependencies if str(dep).strip()],
             }
         )
         if len(out) >= max_sub_questions:
@@ -71,9 +79,12 @@ def parse_sub_questions(
     return out or None
 
 
-def make_decompose_query(llm, config: AgentConfig):
+def make_decompose_query(llm, config: AgentConfig, *, count_step: bool = True):
     def decompose_query(state: dict[str, Any]) -> dict[str, Any]:
-        if not begin_node(state, config):
+        if count_step:
+            if not begin_node(state, config):
+                return state
+        elif state.get("termination_reason"):
             return state
         if int(state.get("llm_call_count", 0)) >= config.max_llm_calls:
             state["termination_reason"] = "max_llm_calls"
@@ -100,8 +111,25 @@ def make_decompose_query(llm, config: AgentConfig):
         payload = parse_model_json(response.content) or {}
         subs = parse_sub_questions(payload, query=state["query"], max_sub_questions=config.max_sub_questions)
         if not subs:
-            subs = [{"id": "q1", "query": state["query"], "required_fields": []}]
+            state["sub_questions"] = []
+            state["dependency_edges"] = []
+            state["decomposition_error"] = "invalid_or_empty_decomposition"
+            state["termination_reason"] = "abstain_decomposition_failed"
+            state.setdefault("trajectory_events", []).append(
+                {
+                    "step": int(state.get("step_count", 0)),
+                    "node": "decompose_query",
+                    "action": "decompose",
+                    "status": "FAILED",
+                    "error_type": "INVALID_DECOMPOSITION",
+                    "tokens": 0,
+                }
+            )
+            return state
         state["sub_questions"] = subs
+        state["dependency_edges"] = [
+            edge.to_dict() for edge in normalize_dependency_edges([], subs)
+        ]
         return state
 
     return decompose_query

@@ -8,12 +8,14 @@ raw_value/source_span can never become an official fact.
 from __future__ import annotations
 
 import unittest
+from datetime import date
 from decimal import Decimal
 
 from src.structured.schema import (
     FinancialFact,
     Metric,
     Period,
+    PeriodBasis,
     PeriodType,
     PROVENANCE_FIELDS,
     ValueType,
@@ -68,6 +70,10 @@ class TestFinancialFact(unittest.TestCase):
         fact = FinancialFact(**{**GOOD_FACT, "metric": "net_profit", "value_type": "forecast"})
         self.assertEqual(fact.metric, Metric.NET_PROFIT)
         self.assertEqual(fact.value_type, ValueType.FORECAST)
+
+    def test_accepts_adjusted_value_type(self) -> None:
+        fact = FinancialFact(**{**GOOD_FACT, "value_type": "adjusted"})
+        self.assertEqual(fact.value_type, ValueType.ADJUSTED)
 
     def test_accepts_period_dict(self) -> None:
         fact = FinancialFact(**{**GOOD_FACT, "period": {"kind": "H1", "year": 2024}})
@@ -126,6 +132,35 @@ class TestFinancialFact(unittest.TestCase):
         fact = FinancialFact(**GOOD_FACT)
         restored = FinancialFact.from_dict(fact.to_dict())
         self.assertEqual(restored, fact)
+
+    def test_v2_coordinates_round_trip(self) -> None:
+        fact = FinancialFact(
+            **{
+                **GOOD_FACT,
+                "accounting_scope": "consolidated",
+                "period_basis": "standalone",
+                "source_date": "2026-03-28",
+                "revision_status": "restated",
+            }
+        )
+        self.assertEqual(fact.source_date, date(2026, 3, 28))
+        restored = FinancialFact.from_dict(fact.to_dict())
+        self.assertEqual(restored, fact)
+        self.assertEqual(restored.accounting_scope, "consolidated")
+        self.assertEqual(restored.period_basis, PeriodBasis.STANDALONE)
+        self.assertEqual(restored.revision_status, "restated")
+
+    def test_legacy_json_without_v2_coordinates_still_loads(self) -> None:
+        legacy = FinancialFact(**GOOD_FACT).to_dict()
+        legacy.pop("accounting_scope", None)
+        legacy.pop("period_basis", None)
+        legacy.pop("source_date", None)
+        legacy.pop("revision_status", None)
+        restored = FinancialFact.from_dict(legacy)
+        self.assertIsNone(restored.accounting_scope)
+        self.assertIsNone(restored.period_basis)
+        self.assertIsNone(restored.source_date)
+        self.assertIsNone(restored.revision_status)
 
     def test_to_dict_has_provenance_fields(self) -> None:
         data = FinancialFact(**GOOD_FACT).to_dict()

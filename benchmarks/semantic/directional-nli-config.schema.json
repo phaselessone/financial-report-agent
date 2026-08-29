@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "directional-nli-config.schema.json",
+  "title": "Local directional NLI runtime configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "model",
+    "revision",
+    "entailment_label_id",
+    "max_length",
+    "device",
+    "local_files_only",
+    "trust_remote_code"
+  ],
+  "properties": {
+    "kind": {"const": "directional_nli"},
+    "model": {"type": "string", "minLength": 1},
+    "revision": {"type": "string", "minLength": 1},
+    "entailment_label_id": {"type": "integer", "minimum": 0},
+    "max_length": {"type": "integer", "minimum": 8, "maximum": 4096},
+    "device": {"enum": ["cpu", "cuda", "mps"]},
+    "local_files_only": {"const": true},
+    "trust_remote_code": {"const": false}
+  }
+}

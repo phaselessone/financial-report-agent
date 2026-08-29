@@ -88,6 +88,14 @@ class TestNormalizeFactValue(unittest.TestCase):
         self.assertEqual(value, Decimal("22446000000"))
         self.assertEqual(unit, "元")
 
+    def test_eps_per_share_unit_is_normalized(self) -> None:
+        value, unit = normalize_fact_value("3.25元/股", Metric.EPS)
+        self.assertEqual(value, Decimal("3.25"))
+        self.assertEqual(unit, "元/股")
+
+    def test_eps_rejects_currency_dimension(self) -> None:
+        self.assertIsNone(normalize_fact_value("3.25亿元", Metric.EPS))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "reviewed-manifest.schema.json",
+  "title": "Reviewed hard-case benchmark manifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "benchmark_version",
+    "review_status",
+    "case_count",
+    "cases_hash",
+    "case_ids_hash",
+    "source_provenance",
+    "category_quotas",
+    "source_quotas"
+  ],
+  "properties": {
+    "schema_version": {"const": "reviewed-hard-cases-manifest-v1"},
+    "benchmark_version": {"type": "string", "minLength": 1},
+    "review_status": {"const": "reviewed"},
+    "case_count": {"type": "integer", "minimum": 1},
+    "cases_hash": {"$ref": "#/$defs/sha256"},
+    "case_ids_hash": {"$ref": "#/$defs/sha256"},
+    "source_provenance": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["source_id", "sha256"],
+        "properties": {
+          "source_id": {"type": "string", "minLength": 1},
+          "sha256": {"$ref": "#/$defs/sha256"},
+          "uri": {"type": "string", "minLength": 1},
+          "path": {"type": "string", "minLength": 1},
+          "document_id": {"type": "string", "minLength": 1}
+        },
+        "anyOf": [{"required": ["uri"]}, {"required": ["path"]}, {"required": ["document_id"]}],
+        "additionalProperties": true
+      }
+    },
+    "category_quotas": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"enum": ["simple_factual", "numeric_disambiguation", "cross_report_comparison", "derived_calculation", "multi_hop", "rewrite_required", "misleading_top_1", "conflicting_evidence", "must_abstain", "partial_answer"]},
+      "additionalProperties": {"type": "integer", "minimum": 0}
+    },
+    "source_quotas": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"type": "integer", "minimum": 0}
+    },
+    "coverage": {
+      "type": "object",
+      "properties": {
+        "category_counts": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+        "source_case_counts": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+        "category_quotas": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+        "source_quotas": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+        "category_shortfalls": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 1}},
+        "source_shortfalls": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 1}},
+        "category_quotas_met": {"type": "boolean"},
+        "source_quotas_met": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"}
+  },
+  "additionalProperties": true
+}

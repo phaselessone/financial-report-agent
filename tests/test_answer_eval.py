@@ -3,11 +3,38 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from src.evaluation.answer_eval import evaluate_answer_results, materialize_answer_eval_sets
+from src.evaluation.answer_eval import (
+    evaluate_answer_results,
+    materialize_answer_eval_sets,
+    merge_answer_eval_results,
+    read_answer_eval_results,
+    read_answer_eval_summary,
+)
 from src.evaluation.benchmark_assets import build_doc_manifest
+from src.evaluation.run_identity import RunIdentity, hash_case_ids
 
 
 class AnswerEvalTests(unittest.TestCase):
+    @staticmethod
+    def _run_identity(profile: str) -> RunIdentity:
+        return RunIdentity(
+            benchmark_profile=profile,
+            benchmark_version="answer-eval-v1",
+            benchmark_hash="benchmark-sha256",
+            case_ids_hash=hash_case_ids(["full_q1"]),
+            case_count=1,
+            corpus_hash="corpus-sha256",
+            model="model-x",
+            provider="provider-x",
+            model_revision="revision-1",
+            temperature=0.0,
+            prompt_version="answer-eval-v1",
+            budgets={"eval_limit": 0},
+            feature_flags={"runtime": {}, "treatments": {"pipeline": "answer-eval"}},
+            git_commit="commit",
+            source_manifest_hash="manifest-sha256",
+        )
+
     def _sample_chunks(self) -> list[dict[str, object]]:
         return [
             {
@@ -344,6 +371,192 @@ class AnswerEvalTests(unittest.TestCase):
             self.assertEqual(full_report["profile_filter"]["benchmark_profile"], "historical-full-raw")
             self.assertEqual(full_report["profile_filter"]["dropped_conflict_group_count"], 0)
             self.assertEqual(full_report["profile_filter"]["dropped_question_ids"], [])
+
+    def test_evaluation_results_and_summary_carry_the_complete_run_identity(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            chunks_path = tmp_path / "chunks.jsonl"
+            chunks_path.write_text(
+                "\n".join(json.dumps(row, ensure_ascii=False) for row in self._sample_chunks()) + "\n",
+                encoding="utf-8",
+            )
+            identity = self._run_identity("historical-full-core")
+            eval_rows = [
+                {
+                    "question_id": "full_q1",
+                    "query": "Which report discusses foundry?",
+                    "question_type": "fact",
+                    "intent": "report_lookup",
+                    "industry": "semiconductor",
+                    "gold_answer": "Foundry Weekly",
+                    "gold_doc_ids": ["doc-a"],
+                    "gold_page_nums": [1],
+                    "gold_chunk_ids": ["doc-a-c1"],
+                    "must_abstain": False,
+                    "target_doc_keys": ["foundry"],
+                    "target_titles": ["Foundry Weekly"],
+                }
+            ]
+            result_rows = [
+                {
+                    "question_id": "full_q1",
+                    "failed": True,
+                    "error_type": "RuntimeError",
+                    "error_message": "boom",
+                    "abstained": False,
+                    "final_answer": "",
+                    "citations": [],
+                    "timings": {},
+                }
+            ]
+            results_output = tmp_path / "answer_eval_results.jsonl"
+
+            summary = evaluate_answer_results(
+                eval_rows=eval_rows,
+                result_rows=result_rows,
+                chunks_path=chunks_path,
+                results_output_path=results_output,
+                summary_output_path=tmp_path / "summary.json",
+                markdown_output_path=tmp_path / "summary.md",
+                latency_output_path=tmp_path / "latency.json",
+                answer_badcase_output_path=tmp_path / "answer_badcases.jsonl",
+                abstain_badcase_output_path=tmp_path / "abstain_badcases.jsonl",
+                run_metadata={
+                    "benchmark_profile": "historical-full-core",
+                    "run_id": identity.run_id,
+                    "run_identity": identity.to_dict(),
+                },
+            )
+
+            persisted = json.loads(results_output.read_text(encoding="utf-8").strip())
+            self.assertEqual(persisted["run_id"], identity.run_id)
+            self.assertEqual(persisted["run_identity"], identity.to_dict())
+            self.assertEqual(persisted["benchmark_profile"], "historical-full-core")
+            self.assertEqual(summary["run_id"], identity.run_id)
+            self.assertEqual(summary["run_identity"], identity.to_dict())
+            self.assertEqual(summary["benchmark_profile"], "historical-full-core")
+
+    def test_evaluation_rejects_cross_profile_result_before_writing_outputs(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            chunks_path = tmp_path / "chunks.jsonl"
+            chunks_path.write_text(
+                "\n".join(json.dumps(row, ensure_ascii=False) for row in self._sample_chunks()) + "\n",
+                encoding="utf-8",
+            )
+            identity = self._run_identity("historical-full-core")
+            results_output = tmp_path / "answer_eval_results.jsonl"
+
+            with self.assertRaisesRegex(ValueError, "benchmark_profile"):
+                evaluate_answer_results(
+                    eval_rows=[
+                        {
+                            "question_id": "full_q1",
+                            "query": "Which report discusses foundry?",
+                            "question_type": "fact",
+                            "intent": "report_lookup",
+                            "industry": "semiconductor",
+                            "gold_answer": "Foundry Weekly",
+                            "gold_doc_ids": ["doc-a"],
+                            "gold_page_nums": [1],
+                            "gold_chunk_ids": ["doc-a-c1"],
+                            "must_abstain": False,
+                            "target_doc_keys": ["foundry"],
+                            "target_titles": ["Foundry Weekly"],
+                        }
+                    ],
+                    result_rows=[
+                        {
+                            "question_id": "full_q1",
+                            "benchmark_profile": "historical-full-raw",
+                            "failed": True,
+                            "abstained": False,
+                            "final_answer": "",
+                            "citations": [],
+                            "timings": {},
+                        }
+                    ],
+                    chunks_path=chunks_path,
+                    results_output_path=results_output,
+                    summary_output_path=tmp_path / "summary.json",
+                    markdown_output_path=tmp_path / "summary.md",
+                    latency_output_path=tmp_path / "latency.json",
+                    answer_badcase_output_path=tmp_path / "answer_badcases.jsonl",
+                    abstain_badcase_output_path=tmp_path / "abstain_badcases.jsonl",
+                    run_metadata={
+                        "benchmark_profile": "historical-full-core",
+                        "run_id": identity.run_id,
+                        "run_identity": identity.to_dict(),
+                    },
+                )
+
+            self.assertFalse(results_output.exists())
+
+    def test_profile_aware_reader_rejects_core_raw_cross_read(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "raw-results.jsonl"
+            raw_identity = self._run_identity("historical-full-raw")
+            path.write_text(
+                json.dumps(
+                    {
+                        "question_id": "full_q1",
+                        "benchmark_profile": "historical-full-raw",
+                        "run_id": raw_identity.run_id,
+                        "run_identity": raw_identity.to_dict(),
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "benchmark_profile"):
+                read_answer_eval_results(
+                    path,
+                    benchmark_profile="historical-full-core",
+                )
+
+    def test_profile_aware_merge_rejects_core_raw_rows(self) -> None:
+        core_identity = self._run_identity("historical-full-core")
+        raw_identity = self._run_identity("historical-full-raw")
+        core_row = {
+            "question_id": "full_q1",
+            "benchmark_profile": "historical-full-core",
+            "run_id": core_identity.run_id,
+            "run_identity": core_identity.to_dict(),
+        }
+        raw_row = {
+            "question_id": "full_q1",
+            "benchmark_profile": "historical-full-raw",
+            "run_id": raw_identity.run_id,
+            "run_identity": raw_identity.to_dict(),
+        }
+
+        with self.assertRaisesRegex(ValueError, "benchmark_profile"):
+            merge_answer_eval_results(
+                [[core_row], [raw_row]],
+                benchmark_profile="historical-full-core",
+            )
+
+    def test_profile_aware_summary_reader_rejects_core_raw_cross_read(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "raw-summary.json"
+            raw_identity = self._run_identity("historical-full-raw")
+            path.write_text(
+                json.dumps(
+                    {
+                        "benchmark_profile": "historical-full-raw",
+                        "run_id": raw_identity.run_id,
+                        "run_identity": raw_identity.to_dict(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "benchmark_profile"):
+                read_answer_eval_summary(
+                    path,
+                    benchmark_profile="historical-full-core",
+                )
 
     def test_failed_result_rows_are_counted_in_summary(self) -> None:
         chunks = self._sample_chunks()

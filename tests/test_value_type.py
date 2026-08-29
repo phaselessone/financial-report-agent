@@ -50,6 +50,9 @@ class TestClassifyValueType(unittest.TestCase):
     def test_unknown_not_str(self) -> None:
         self.assertEqual(classify_value_type(None), ValueType.UNKNOWN)
 
+    def test_adjusted_marker_takes_precedence(self) -> None:
+        self.assertEqual(classify_value_type("经调整净利润同比增长12%"), ValueType.ADJUSTED)
+
 
 if __name__ == "__main__":
     unittest.main()

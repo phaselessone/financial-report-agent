@@ -76,7 +76,10 @@ class MultiHopFlowTests(unittest.TestCase):
         self.assertNotIn("rewrite", kinds)  # and never rewrote
         self.assertEqual(state["rewrite_count"], 0)
         self.assertEqual(state["termination_reason"], "completed")
-        self.assertEqual(state["final_answer"]["final_answer"], "宁德时代2025年营收1234亿元，机构看好其增长逻辑。")
+        self.assertEqual(
+            state["final_answer"]["final_answer"],
+            "宁德时代2025年营收1234亿元。 机构看好其增长逻辑。",
+        )
         # synthesize answered the ORIGINAL query, not the last sub-question
         self.assertEqual(answerer.answer_calls[0]["query"], MULTI_HOP_QUERY)
 
@@ -151,7 +154,9 @@ class MultiHopFlowTests(unittest.TestCase):
             runtime=runtime,
             answerer=answerer,
             llm=llm,
-            config=AgentConfig(),
+            # This fixture validates routing/merging and uses a legacy
+            # whole-answer draft rather than reviewed atomic claim labels.
+            config=AgentConfig(strict_claim_verification=False),
             query="贵州茅台2025年营业收入是多少？机构怎么看？",
             fact_store=store,
             company_aliases=aliases,
