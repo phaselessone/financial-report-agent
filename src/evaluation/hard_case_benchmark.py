@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import subprocess
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -49,6 +50,42 @@ _LEGACY_PROFILE_ALIASES = {
 }
 _REVIEWED_CLAIM_STATUSES = {"ENTAILED", "CONTRADICTED", "INSUFFICIENT"}
 _CALCULATION_STATUSES = {"SUCCESS", "FAILED", "INSUFFICIENT", "AMBIGUOUS", "SKIPPED"}
+_RFC3339_DATETIME_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
+)
+_VALIDATED_REVIEWED_MANIFEST_TOKEN = object()
+
+
+def _reviewed_manifest_state_seal(value: Mapping[str, Any]) -> str:
+    payload = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+class ValidatedReviewedManifest(dict):
+    """A reviewed manifest carrying validator-issued in-process state."""
+
+    def __init__(
+        self,
+        value: Mapping[str, Any],
+        *,
+        source_files_verified: bool = False,
+        release_attestation_validated: bool = False,
+        _validation_token: object | None = None,
+    ) -> None:
+        trusted = bool(source_files_verified or release_attestation_validated)
+        if trusted and _validation_token is not _VALIDATED_REVIEWED_MANIFEST_TOKEN:
+            raise ValueError(
+                "validated reviewed manifest state can only be issued by the validator"
+            )
+        super().__init__(value)
+        self.source_files_verified = bool(source_files_verified)
+        self.release_attestation_validated = bool(release_attestation_validated)
+        self.validation_seal = _reviewed_manifest_state_seal(self) if trusted else None
 
 
 def _is_sha256(value: Any) -> bool:
@@ -245,6 +282,14 @@ def _sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _sha256_json(value: Any) -> str:
     return _sha256_bytes(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8"))
 
@@ -287,10 +332,103 @@ def _quota_map(value: Any, *, label: str, allowed: set[str] | None = None) -> di
     return result
 
 
+def _validate_release_attestation(value: Any, *, required: bool) -> dict[str, Any] | None:
+    if value is None:
+        if required:
+            raise ValueError("reviewed release requires release_attestation")
+        return None
+    if not isinstance(value, Mapping):
+        raise ValueError("release_attestation must be an object")
+    allowed = {"status", "reviewer_id", "review_batch", "reviewed_at"}
+    unknown = sorted(set(value).difference(allowed))
+    if unknown:
+        raise ValueError(
+            "release_attestation has unknown fields: " + ", ".join(map(str, unknown))
+        )
+    if value.get("status") != "reviewed":
+        raise ValueError("release_attestation status must equal reviewed")
+    normalized = dict(value)
+    for field in ("reviewer_id", "review_batch", "reviewed_at"):
+        text = str(value.get(field) or "").strip()
+        if not text:
+            raise ValueError(f"release_attestation {field} must be non-empty")
+        normalized[field] = text
+    if not _RFC3339_DATETIME_RE.fullmatch(normalized["reviewed_at"]):
+        raise ValueError(
+            "release_attestation reviewed_at must be an RFC-3339 timestamp with timezone"
+        )
+    try:
+        reviewed_at = datetime.fromisoformat(
+            normalized["reviewed_at"].replace("Z", "+00:00")
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "release_attestation reviewed_at must be an ISO-8601 timestamp"
+        ) from exc
+    if reviewed_at.tzinfo is None:
+        raise ValueError("release_attestation reviewed_at must include a timezone")
+    return normalized
+
+
+def _verify_source_files(
+    provenance: Sequence[Mapping[str, Any]],
+    *,
+    source_root: str | Path | None,
+) -> list[dict[str, str]]:
+    if source_root is None:
+        raise ValueError("reviewed source verification requires an explicit source_root")
+    root = Path(source_root).resolve()
+    if not root.is_dir():
+        raise ValueError(f"reviewed source_root is not a directory: {root}")
+    verified: list[dict[str, str]] = []
+    for item in provenance:
+        source_id = str(item.get("source_id") or "").strip()
+        declared_path = str(item.get("path") or "").strip()
+        if not declared_path:
+            raise ValueError(
+                f"reviewed source {source_id!r} requires a relative path for file verification"
+            )
+        relative_path = Path(declared_path)
+        if relative_path.is_absolute():
+            raise ValueError(
+                f"reviewed source {source_id!r} path must be relative to source_root"
+            )
+        resolved = (root / relative_path).resolve()
+        try:
+            confined_relative_path = resolved.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(
+                f"reviewed source {source_id!r} path escapes source_root"
+            ) from exc
+        if not resolved.is_file():
+            raise ValueError(
+                f"reviewed source {source_id!r} file does not exist: {declared_path}"
+            )
+        actual_sha256 = _sha256_file(resolved)
+        declared_sha256 = str(item.get("sha256") or "").strip().lower()
+        if actual_sha256 != declared_sha256:
+            raise ValueError(
+                f"reviewed source {source_id!r} SHA-256 mismatch: "
+                f"expected {declared_sha256}, got {actual_sha256}"
+            )
+        verified.append(
+            {
+                "source_id": source_id,
+                "path": confined_relative_path.as_posix(),
+                "sha256": actual_sha256,
+            }
+        )
+    return sorted(verified, key=lambda item: item["source_id"])
+
+
 def validate_reviewed_manifest(
     manifest: Mapping[str, Any],
     cases: Iterable[Mapping[str, Any]],
-) -> dict[str, Any]:
+    *,
+    source_root: str | Path | None = None,
+    verify_source_files: bool = False,
+    require_release_attestation: bool = False,
+) -> ValidatedReviewedManifest:
     """Validate a reviewed benchmark manifest against recomputed case facts.
 
     The manifest is authoritative for the benchmark asset as a whole. Per-row
@@ -299,6 +437,22 @@ def validate_reviewed_manifest(
     """
     if not isinstance(manifest, Mapping):
         raise ValueError("reviewed manifest must be an object")
+    inherited_source_verification = (
+        isinstance(manifest, ValidatedReviewedManifest)
+        and manifest.source_files_verified
+    )
+    inherited_attestation_validation = (
+        isinstance(manifest, ValidatedReviewedManifest)
+        and manifest.release_attestation_validated
+    )
+    if (
+        inherited_source_verification or inherited_attestation_validation
+    ) and manifest.validation_seal != _reviewed_manifest_state_seal(manifest):
+        raise ValueError("validated reviewed manifest was mutated after validation")
+    if "source_verification" in manifest and not inherited_source_verification:
+        raise ValueError(
+            "source_verification is validator-derived and must not be self-reported"
+        )
     rows = validate_cases(cases, require_exact_100=False)
     if not rows or any(_benchmark_kind(row) != "reviewed" for row in rows):
         raise ValueError("reviewed manifest requires reviewed benchmark rows")
@@ -347,6 +501,28 @@ def validate_reviewed_manifest(
         if not any(item.get(locator) for locator in ("uri", "path", "document_id")):
             raise ValueError("source_provenance entries require a source locator")
         provenance_by_id[source_id] = dict(item)
+
+    release_attestation = _validate_release_attestation(
+        manifest.get("release_attestation"),
+        required=require_release_attestation,
+    )
+    release_attestation_validated = bool(
+        release_attestation is not None or inherited_attestation_validation
+    )
+    verified_sources: list[dict[str, str]] | None = None
+    source_files_verified = inherited_source_verification
+    if verify_source_files:
+        verified_sources = _verify_source_files(
+            list(provenance_by_id.values()),
+            source_root=source_root,
+        )
+        source_files_verified = True
+    elif inherited_source_verification:
+        inherited = manifest.get("source_verification")
+        if not isinstance(inherited, Mapping) or inherited.get("status") != "VERIFIED":
+            raise ValueError(
+                "validated reviewed manifest lost its source verification record"
+            )
 
     category_counts = {category: 0 for category in CATEGORIES}
     source_case_counts: dict[str, int] = {source_id: 0 for source_id in provenance_by_id}
@@ -418,7 +594,7 @@ def validate_reviewed_manifest(
     declared_coverage = manifest.get("coverage")
     if declared_coverage is not None and declared_coverage != coverage:
         raise ValueError("manifest coverage does not match recomputed category/source coverage")
-    return {
+    normalized: dict[str, Any] = {
         **dict(manifest),
         "cases_hash": actual_cases_hash,
         "cases_sha256": actual_cases_hash,
@@ -431,6 +607,24 @@ def validate_reviewed_manifest(
         "source_quotas": source_quotas,
         "coverage": coverage,
     }
+    normalized.pop("source_verification", None)
+    if release_attestation is not None:
+        normalized["release_attestation"] = release_attestation
+    if source_files_verified:
+        if verified_sources is not None:
+            normalized["source_verification"] = {
+                "status": "VERIFIED",
+                "mode": "recomputed-local-file-sha256",
+                "sources": verified_sources,
+            }
+        else:
+            normalized["source_verification"] = dict(manifest["source_verification"])
+    return ValidatedReviewedManifest(
+        normalized,
+        source_files_verified=source_files_verified,
+        release_attestation_validated=release_attestation_validated,
+        _validation_token=_VALIDATED_REVIEWED_MANIFEST_TOKEN,
+    )
 
 
 def validate_case(case: Mapping[str, Any]) -> None:
@@ -506,7 +700,11 @@ def load_cases(path: str | Path | None = None) -> list[dict[str, Any]]:
 def load_reviewed_cases(
     cases_path: str | Path = DEFAULT_REVIEWED_CASES_PATH,
     manifest_path: str | Path = DEFAULT_REVIEWED_MANIFEST_PATH,
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    *,
+    source_root: str | Path | None = None,
+    verify_source_files: bool = False,
+    require_release_attestation: bool = False,
+) -> tuple[list[dict[str, Any]], ValidatedReviewedManifest]:
     """Load reviewed JSONL rows and return them with their validated manifest."""
     rows = load_cases(Path(cases_path))
     if not rows or any(_benchmark_kind(row) != "reviewed" for row in rows):
@@ -515,7 +713,13 @@ def load_reviewed_cases(
         manifest = json.load(handle)
     if not isinstance(manifest, Mapping):
         raise ValueError("reviewed manifest must be a JSON object")
-    return rows, validate_reviewed_manifest(manifest, rows)
+    return rows, validate_reviewed_manifest(
+        manifest,
+        rows,
+        source_root=source_root,
+        verify_source_files=verify_source_files,
+        require_release_attestation=require_release_attestation,
+    )
 
 
 def _contains_claim(answer: str, claim: str) -> bool:
@@ -1387,6 +1591,14 @@ def evaluate_predictions(
         }
         checks = {
             "reviewed_manifest_valid": validated_manifest is not None,
+            "reviewed_source_files_verified": bool(
+                isinstance(validated_manifest, ValidatedReviewedManifest)
+                and validated_manifest.source_files_verified
+            ),
+            "reviewed_release_attestation_validated": bool(
+                isinstance(validated_manifest, ValidatedReviewedManifest)
+                and validated_manifest.release_attestation_validated
+            ),
             "reviewed_target_declared": target > 0,
             "reviewed_target_met": target_met,
             "reviewed_claim_gold_denominator_nonzero": int(
@@ -1418,6 +1630,10 @@ def evaluate_predictions(
         }
         reason_for_check = {
             "reviewed_manifest_valid": "reviewed_manifest_required",
+            "reviewed_source_files_verified": "reviewed_source_files_not_verified",
+            "reviewed_release_attestation_validated": (
+                "reviewed_release_attestation_required"
+            ),
             "reviewed_target_declared": "reviewed_target_not_declared",
             "reviewed_target_met": "reviewed_target_not_met",
             "reviewed_claim_gold_denominator_nonzero": (

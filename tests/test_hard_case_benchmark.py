@@ -16,6 +16,7 @@ from src.evaluation.hard_case_benchmark import (
     PROFILES,
     REVIEWED_MANIFEST_SCHEMA_VERSION,
     SYNTHETIC_CONTRACT_VERSION,
+    ValidatedReviewedManifest,
     canonical_reviewed_case_ids_hash,
     canonical_reviewed_cases_hash,
     evaluate_case,
@@ -133,6 +134,59 @@ def _complete_reviewed_manifest(cases, **overrides):
     )
     manifest.update(overrides)
     return manifest
+
+
+def _release_attestation() -> dict[str, str]:
+    return {
+        "status": "reviewed",
+        "reviewer_id": "reviewer@example.com",
+        "review_batch": "reviewed-hard-cases-v1",
+        "reviewed_at": "2026-08-23T10:00:00+08:00",
+    }
+
+
+def _reviewed_asset_inputs(
+    tmp_path: Path,
+    cases: list[dict],
+) -> tuple[dict, Path, Path]:
+    source_root = tmp_path / "reviewed-sources"
+    source_root.mkdir(parents=True)
+    source_path = source_root / "annual-report-set.txt"
+    source_path.write_text("reviewed annual report fixture\n", encoding="utf-8")
+    source_sha256 = hashlib.sha256(source_path.read_bytes()).hexdigest()
+    case_provenance = {
+        "source_id": "annual-report-set",
+        "uri": "review://annual-reports/2024-2025",
+        "sha256": source_sha256,
+    }
+    for case in cases:
+        case["source_provenance"] = [dict(case_provenance)]
+    manifest = _complete_reviewed_manifest(
+        cases,
+        source_provenance=[
+            {
+                **case_provenance,
+                "path": source_path.relative_to(source_root).as_posix(),
+            }
+        ],
+        release_attestation=_release_attestation(),
+    )
+    return manifest, source_root, source_path
+
+
+def _verified_reviewed_manifest(
+    tmp_path: Path,
+    cases: list[dict],
+) -> tuple[ValidatedReviewedManifest, Path, Path]:
+    manifest, source_root, source_path = _reviewed_asset_inputs(tmp_path, cases)
+    validated = validate_reviewed_manifest(
+        manifest,
+        cases,
+        source_root=source_root,
+        verify_source_files=True,
+        require_release_attestation=True,
+    )
+    return validated, source_root, source_path
 
 
 def _all_metric_keys(value):
@@ -274,6 +328,138 @@ def test_load_reviewed_cases_uses_explicit_manifest_and_has_stable_defaults(tmp_
     assert DEFAULT_REVIEWED_MANIFEST_PATH.name == "reviewed_manifest.json"
     assert rows == validate_cases([case])
     assert manifest["cases_hash"] == canonical_reviewed_cases_hash(rows)
+
+
+def test_reviewed_source_verification_rejects_path_escape(tmp_path: Path) -> None:
+    cases = [_reviewed_case()]
+    manifest, source_root, source_path = _reviewed_asset_inputs(tmp_path, cases)
+    outside_path = tmp_path / "outside-source.txt"
+    source_path.replace(outside_path)
+    outside_sha256 = hashlib.sha256(outside_path.read_bytes()).hexdigest()
+    cases[0]["source_provenance"][0]["sha256"] = outside_sha256
+    manifest["source_provenance"][0].update(
+        {"path": "../outside-source.txt", "sha256": outside_sha256}
+    )
+    manifest["cases_hash"] = canonical_reviewed_cases_hash(cases)
+
+    with pytest.raises(ValueError, match="escapes source_root"):
+        validate_reviewed_manifest(
+            manifest,
+            cases,
+            source_root=source_root,
+            verify_source_files=True,
+            require_release_attestation=True,
+        )
+
+
+def test_reviewed_source_verification_rejects_missing_file(tmp_path: Path) -> None:
+    cases = [_reviewed_case()]
+    manifest, source_root, source_path = _reviewed_asset_inputs(tmp_path, cases)
+    source_path.unlink()
+
+    with pytest.raises(ValueError, match="file does not exist"):
+        validate_reviewed_manifest(
+            manifest,
+            cases,
+            source_root=source_root,
+            verify_source_files=True,
+            require_release_attestation=True,
+        )
+
+
+def test_reviewed_source_verification_rejects_sha256_drift(tmp_path: Path) -> None:
+    cases = [_reviewed_case()]
+    manifest, source_root, source_path = _reviewed_asset_inputs(tmp_path, cases)
+    source_path.write_text("tampered after review\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="SHA-256 mismatch"):
+        validate_reviewed_manifest(
+            manifest,
+            cases,
+            source_root=source_root,
+            verify_source_files=True,
+            require_release_attestation=True,
+        )
+
+
+def test_reviewed_manifest_rejects_self_reported_source_verification(tmp_path: Path) -> None:
+    cases = [_reviewed_case()]
+    manifest, source_root, source_path = _reviewed_asset_inputs(tmp_path, cases)
+    manifest["source_verification"] = {
+        "status": "VERIFIED",
+        "mode": "recomputed-local-file-sha256",
+        "sources": [
+            {
+                "source_id": "annual-report-set",
+                "path": source_path.relative_to(source_root).as_posix(),
+                "sha256": hashlib.sha256(source_path.read_bytes()).hexdigest(),
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="must not be self-reported"):
+        validate_reviewed_manifest(
+            manifest,
+            cases,
+            source_root=source_root,
+            verify_source_files=True,
+            require_release_attestation=True,
+        )
+
+
+def test_reviewed_release_attestation_is_required_for_formal_validation(
+    tmp_path: Path,
+) -> None:
+    cases = [_reviewed_case()]
+    manifest, source_root, _ = _reviewed_asset_inputs(tmp_path, cases)
+    manifest.pop("release_attestation")
+
+    with pytest.raises(ValueError, match="requires release_attestation"):
+        validate_reviewed_manifest(
+            manifest,
+            cases,
+            source_root=source_root,
+            verify_source_files=True,
+            require_release_attestation=True,
+        )
+
+
+@pytest.mark.parametrize(
+    "reviewed_at",
+    ["2026-08-23", "2026-08-23T10:00:00", "2026-08-23 10:00:00+08:00"],
+)
+def test_reviewed_release_attestation_requires_rfc3339_timezone(
+    tmp_path: Path,
+    reviewed_at: str,
+) -> None:
+    cases = [_reviewed_case()]
+    manifest, source_root, _ = _reviewed_asset_inputs(tmp_path, cases)
+    manifest["release_attestation"]["reviewed_at"] = reviewed_at
+
+    with pytest.raises(ValueError, match="RFC-3339 timestamp with timezone"):
+        validate_reviewed_manifest(
+            manifest,
+            cases,
+            source_root=source_root,
+            verify_source_files=True,
+            require_release_attestation=True,
+        )
+
+
+def test_validated_reviewed_manifest_rejects_post_validation_mutation(
+    tmp_path: Path,
+) -> None:
+    cases = _complete_reviewed_cases()
+    validated, _, _ = _verified_reviewed_manifest(tmp_path, cases)
+    validated.pop("release_attestation")
+
+    with pytest.raises(ValueError, match="mutated after validation"):
+        evaluate_predictions(
+            cases,
+            {case["case_id"]: {"answer": case["gold_answer"]} for case in cases},
+            reviewed_target_count=len(cases),
+            reviewed_manifest=validated,
+        )
 
 
 def test_reviewed_schemas_pin_manifest_hashes_and_status_aware_calculations() -> None:
@@ -779,9 +965,33 @@ def test_reviewed_metrics_remain_coverage_only_until_declared_target_is_met() ->
     assert metrics["performance_claim_status"] == "COVERAGE_ONLY"
 
 
-def test_reviewed_publish_gate_requires_manifest_target_category_source_and_prediction_coverage() -> None:
+def test_legacy_structural_manifest_cannot_pass_reviewed_publish_gate() -> None:
     cases = _complete_reviewed_cases()
     manifest = _complete_reviewed_manifest(cases)
+    predictions = {
+        case["case_id"]: {"answer": case["gold_answer"]}
+        for case in cases
+    }
+
+    metrics, _ = evaluate_predictions(
+        cases,
+        predictions,
+        reviewed_target_count=len(cases),
+        reviewed_manifest=manifest,
+    )
+
+    assert metrics["performance_claim_allowed"] is False
+    assert metrics["publish_gate"]["blocking_reasons"][:2] == [
+        "reviewed_source_files_not_verified",
+        "reviewed_release_attestation_required",
+    ]
+
+
+def test_reviewed_publish_gate_requires_manifest_target_category_source_and_prediction_coverage(
+    tmp_path: Path,
+) -> None:
+    cases = _complete_reviewed_cases()
+    manifest, _, _ = _verified_reviewed_manifest(tmp_path, cases)
     predictions = {
         case["case_id"]: {"answer": case["gold_answer"]}
         for case in cases
@@ -801,6 +1011,8 @@ def test_reviewed_publish_gate_requires_manifest_target_category_source_and_pred
         "allowed": True,
         "checks": {
             "reviewed_manifest_valid": True,
+            "reviewed_source_files_verified": True,
+            "reviewed_release_attestation_validated": True,
             "reviewed_target_declared": True,
             "reviewed_target_met": True,
             "reviewed_claim_gold_denominator_nonzero": True,
@@ -831,7 +1043,9 @@ def test_reviewed_publish_gate_requires_manifest_target_category_source_and_pred
     ]
 
 
-def test_reviewed_publish_gate_requires_nonzero_claim_and_calculation_gold_denominators() -> None:
+def test_reviewed_publish_gate_requires_nonzero_claim_and_calculation_gold_denominators(
+    tmp_path: Path,
+) -> None:
     without_calculations = [
         _reviewed_case(
             case_id=f"REV-{index:03d}",
@@ -840,6 +1054,10 @@ def test_reviewed_publish_gate_requires_nonzero_claim_and_calculation_gold_denom
         )
         for index, category in enumerate(CATEGORIES, start=1)
     ]
+    calculation_manifest, _, _ = _verified_reviewed_manifest(
+        tmp_path / "calculation",
+        without_calculations,
+    )
     calculation_blocked, _ = evaluate_predictions(
         without_calculations,
         {
@@ -847,7 +1065,7 @@ def test_reviewed_publish_gate_requires_nonzero_claim_and_calculation_gold_denom
             for case in without_calculations
         },
         reviewed_target_count=len(without_calculations),
-        reviewed_manifest=_complete_reviewed_manifest(without_calculations),
+        reviewed_manifest=calculation_manifest,
     )
 
     assert calculation_blocked["performance_claim_allowed"] is False
@@ -871,6 +1089,10 @@ def test_reviewed_publish_gate_requires_nonzero_claim_and_calculation_gold_denom
         )
         for index, category in enumerate(CATEGORIES, start=1)
     ]
+    claim_manifest, _, _ = _verified_reviewed_manifest(
+        tmp_path / "claim",
+        without_claims,
+    )
     claim_blocked, _ = evaluate_predictions(
         without_claims,
         {
@@ -878,7 +1100,7 @@ def test_reviewed_publish_gate_requires_nonzero_claim_and_calculation_gold_denom
             for case in without_claims
         },
         reviewed_target_count=len(without_claims),
-        reviewed_manifest=_complete_reviewed_manifest(without_claims),
+        reviewed_manifest=claim_manifest,
     )
 
     assert claim_blocked["performance_claim_allowed"] is False

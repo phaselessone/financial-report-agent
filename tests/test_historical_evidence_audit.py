@@ -5,10 +5,13 @@ from pathlib import Path
 
 import pytest
 
+import src.evaluation.historical_evidence_audit as historical_evidence_audit
 from src.evaluation.historical_evidence_audit import (
+    CANONICAL_STAGE6_ASSET_PATH,
     HistoricalEvidenceAuditError,
     audit_historical_evidence,
     audit_historical_evidence_files,
+    sha1_file,
     sha256_file,
     validate_stage6_corpus_attestation,
 )
@@ -169,7 +172,9 @@ def test_seed_document_mapping_conflict_is_rejected() -> None:
         _audit(seed=seed)
 
 
-def test_file_wrapper_reports_missing_candidate_without_fabricating_readiness(tmp_path: Path) -> None:
+def test_file_wrapper_reports_missing_candidate_without_fabricating_readiness(
+    tmp_path: Path,
+) -> None:
     seed_path = tmp_path / "seed.jsonl"
     results_path = tmp_path / "results.jsonl"
     seed_path.write_text(json.dumps(_seed()[0], ensure_ascii=False) + "\n", encoding="utf-8")
@@ -221,14 +226,16 @@ def _write_stage6_attestation(
     chunks_path: Path,
 ) -> Path:
     path = tmp_path / "stage6.attestation.json"
+    legacy_sha1 = sha1_file(chunks_path)
     path.write_text(
         json.dumps(
             {
                 "schema_version": 1,
-                "corpus_id": "stage6-fixture-v1",
+                "corpus_id": f"corpus:{legacy_sha1[:12]}",
                 "benchmark_profile": "historical-full-raw",
                 "asset": {
-                    "path": chunks_path.name,
+                    "path": CANONICAL_STAGE6_ASSET_PATH,
+                    "legacy_sha1": legacy_sha1,
                     "sha256": sha256_file(chunks_path),
                     "format": "chunks-jsonl",
                     "chunk_count": 1,
@@ -261,7 +268,8 @@ def _write_stage6_attestation(
 def _write_stage6_attestation_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     seed_path = tmp_path / "seed.jsonl"
     results_path = tmp_path / "results.jsonl"
-    chunks_path = tmp_path / "chunks.jsonl"
+    chunks_path = tmp_path / CANONICAL_STAGE6_ASSET_PATH
+    chunks_path.parent.mkdir(parents=True)
     seed_path.write_text(json.dumps(_seed()[0], ensure_ascii=False) + "\n", encoding="utf-8")
     results_path.write_text(json.dumps(_results()[0], ensure_ascii=False) + "\n", encoding="utf-8")
     chunks_path.write_text(json.dumps(_chunks()[0], ensure_ascii=False) + "\n", encoding="utf-8")
@@ -274,10 +282,28 @@ def _write_stage6_attestation_fixture(tmp_path: Path) -> tuple[Path, Path, Path,
     return attestation_path, seed_path, results_path, chunks_path
 
 
-def test_stage6_attestation_binds_provenance_review_and_all_three_assets(tmp_path: Path) -> None:
+def _trust_fixture_stage6_identity(monkeypatch: pytest.MonkeyPatch, chunks_path: Path) -> str:
+    legacy_sha1 = sha1_file(chunks_path)
+    monkeypatch.setattr(
+        historical_evidence_audit,
+        "EXPECTED_STAGE6_CORPUS_ID",
+        f"corpus:{legacy_sha1[:12]}",
+    )
+    monkeypatch.setattr(
+        historical_evidence_audit,
+        "EXPECTED_STAGE6_LEGACY_SHA1",
+        legacy_sha1,
+    )
+    return legacy_sha1
+
+
+def test_stage6_attestation_binds_provenance_review_and_all_three_assets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     attestation_path, seed_path, results_path, chunks_path = _write_stage6_attestation_fixture(
         tmp_path
     )
+    legacy_sha1 = _trust_fixture_stage6_identity(monkeypatch, chunks_path)
 
     record = validate_stage6_corpus_attestation(
         attestation_path,
@@ -287,17 +313,21 @@ def test_stage6_attestation_binds_provenance_review_and_all_three_assets(tmp_pat
         historical_results_path=results_path,
     )
 
-    assert record["corpus_id"] == "stage6-fixture-v1"
+    assert record["corpus_id"] == f"corpus:{legacy_sha1[:12]}"
+    assert record["asset_sha1"] == legacy_sha1
     assert record["asset_sha256"] == sha256_file(chunks_path)
     assert record["source"]["owner"] == "asset-owner-1"
     assert record["review"]["status"] == "reviewed"
     assert record["benchmark_binding"]["seed_sha256"] == sha256_file(seed_path)
 
 
-def test_stage6_attestation_rejects_unreviewed_release(tmp_path: Path) -> None:
+def test_stage6_attestation_rejects_unreviewed_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     attestation_path, seed_path, results_path, chunks_path = _write_stage6_attestation_fixture(
         tmp_path
     )
+    _trust_fixture_stage6_identity(monkeypatch, chunks_path)
     payload = json.loads(attestation_path.read_text(encoding="utf-8"))
     payload["review"]["status"] = "pending"
     attestation_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
@@ -312,15 +342,122 @@ def test_stage6_attestation_rejects_unreviewed_release(tmp_path: Path) -> None:
         )
 
 
-def test_stage6_attestation_rejects_benchmark_binding_drift(tmp_path: Path) -> None:
+def test_stage6_attestation_rejects_benchmark_binding_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     attestation_path, seed_path, results_path, chunks_path = _write_stage6_attestation_fixture(
         tmp_path
     )
+    _trust_fixture_stage6_identity(monkeypatch, chunks_path)
     payload = json.loads(attestation_path.read_text(encoding="utf-8"))
     payload["benchmark_binding"]["seed_sha256"] = "0" * 64
     attestation_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
 
     with pytest.raises(HistoricalEvidenceAuditError, match="seed SHA-256 mismatch"):
+        validate_stage6_corpus_attestation(
+            attestation_path,
+            repo_root=tmp_path,
+            candidate_chunks_path=chunks_path,
+            seed_path=seed_path,
+            historical_results_path=results_path,
+        )
+
+
+def test_stage6_attestation_rejects_nonhistorical_corpus_identity(tmp_path: Path) -> None:
+    attestation_path, seed_path, results_path, chunks_path = _write_stage6_attestation_fixture(
+        tmp_path
+    )
+
+    with pytest.raises(HistoricalEvidenceAuditError, match="corpus_id does not match"):
+        validate_stage6_corpus_attestation(
+            attestation_path,
+            repo_root=tmp_path,
+            candidate_chunks_path=chunks_path,
+            seed_path=seed_path,
+            historical_results_path=results_path,
+        )
+
+
+def test_stage6_attestation_rejects_legacy_sha1_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    attestation_path, seed_path, results_path, chunks_path = _write_stage6_attestation_fixture(
+        tmp_path
+    )
+    _trust_fixture_stage6_identity(monkeypatch, chunks_path)
+    payload = json.loads(attestation_path.read_text(encoding="utf-8"))
+    payload["asset"]["legacy_sha1"] = "0" * 40
+    attestation_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    with pytest.raises(HistoricalEvidenceAuditError, match="legacy SHA-1 does not match"):
+        validate_stage6_corpus_attestation(
+            attestation_path,
+            repo_root=tmp_path,
+            candidate_chunks_path=chunks_path,
+            seed_path=seed_path,
+            historical_results_path=results_path,
+        )
+
+
+def test_stage6_attestation_rejects_candidate_file_sha1_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    attestation_path, seed_path, results_path, chunks_path = _write_stage6_attestation_fixture(
+        tmp_path
+    )
+    _trust_fixture_stage6_identity(monkeypatch, chunks_path)
+    with chunks_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"chunk_id": "unexpected"}) + "\n")
+
+    with pytest.raises(HistoricalEvidenceAuditError, match="candidate legacy SHA-1 mismatch"):
+        validate_stage6_corpus_attestation(
+            attestation_path,
+            repo_root=tmp_path,
+            candidate_chunks_path=chunks_path,
+            seed_path=seed_path,
+            historical_results_path=results_path,
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda payload: payload.update({"unexpected": True}), "unknown fields"),
+        (
+            lambda payload: payload["review"].update({"reviewed_at": "not-a-date"}),
+            "RFC-3339 date-time",
+        ),
+        (
+            lambda payload: payload["review"].update({"reviewed_at": "2026-08-24T12:00:00"}),
+            "RFC-3339 date-time",
+        ),
+        (
+            lambda payload: payload["asset"].update({"path": "chunks.jsonl"}),
+            "asset.path must equal",
+        ),
+        (
+            lambda payload: payload["asset"].update(
+                {"path": "tmp_stage6_data\\chunks\\chunks.jsonl"}
+            ),
+            "asset.path must equal",
+        ),
+    ],
+)
+def test_stage6_attestation_rejects_schema_bypass_fields(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutate,
+    message: str,
+) -> None:
+    attestation_path, seed_path, results_path, chunks_path = _write_stage6_attestation_fixture(
+        tmp_path
+    )
+    _trust_fixture_stage6_identity(monkeypatch, chunks_path)
+    payload = json.loads(attestation_path.read_text(encoding="utf-8"))
+    mutate(payload)
+    attestation_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    with pytest.raises(HistoricalEvidenceAuditError, match=message):
         validate_stage6_corpus_attestation(
             attestation_path,
             repo_root=tmp_path,

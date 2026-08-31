@@ -17,7 +17,26 @@
   "properties": {
     "kind": {"const": "directional_nli"},
     "model": {"type": "string", "minLength": 1},
-    "revision": {"type": "string", "minLength": 1},
+    "revision": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!refs/heads/)(?!heads/).+$",
+      "not": {
+        "enum": [
+          "current",
+          "default",
+          "dev",
+          "development",
+          "head",
+          "latest",
+          "main",
+          "master",
+          "release",
+          "stable",
+          "unversioned"
+        ]
+      }
+    },
     "entailment_label_id": {"type": "integer", "minimum": 0},
     "max_length": {"type": "integer", "minimum": 8, "maximum": 4096},
     "device": {"enum": ["cpu", "cuda", "mps"]},

@@ -13,11 +13,19 @@ def _safe_report(**overrides):
     report = {
         "calibrated": True,
         "precision_constraint_satisfied": True,
+        "positive_support_constraint_satisfied": True,
         "coverage_constraint_satisfied": True,
         "threshold": 0.9,
-        "metrics": {"precision": 0.97},
-        "calibration_config": {"min_precision": 0.95},
-        "label_contract": {"review_status": "reviewed"},
+        "metrics": {"precision": 1.0, "tp": 10, "fp": 0},
+        "calibration_config": {
+            "min_precision": 0.95,
+            "min_predicted_positives": 5,
+            "min_true_positives": 5,
+        },
+        "label_contract": {
+            "review_status": "reviewed",
+            "content_hash_binding": "sha256",
+        },
         "labels_sha256": "a" * 64,
         "scorer_kind": "directional_nli",
         "scorer_identity": {
@@ -26,6 +34,8 @@ def _safe_report(**overrides):
             "revision": "fixture-v1",
             "config_sha256": "b" * 64,
         },
+        "calibrated_statuses": ["ENTAILED"],
+        "contradiction_state_change_allowed": False,
     }
     report.update(overrides)
     return report
@@ -36,10 +46,19 @@ def _safe_report(**overrides):
     [
         {"calibrated": False},
         {"precision_constraint_satisfied": False},
-        {"label_contract": {"review_status": "synthetic_not_human_reviewed"}},
+        {"positive_support_constraint_satisfied": False},
+        {
+            "label_contract": {
+                "review_status": "synthetic_not_human_reviewed",
+                "content_hash_binding": "sha256",
+            }
+        },
         {"labels_sha256": ""},
         {"scorer_kind": "embedding_similarity"},
-        {"metrics": {"precision": 0.9}},
+        {"metrics": {"precision": 0.9, "tp": 9, "fp": 1}},
+        {"metrics": {"precision": 1.0, "tp": 1, "fp": 0}},
+        {"label_contract": {"review_status": "reviewed", "content_hash_binding": "none"}},
+        {"calibrated_statuses": ["ENTAILED", "CONTRADICTED"]},
     ],
 )
 def test_semantic_scorer_activation_fails_closed_without_full_reviewed_contract(overrides) -> None:

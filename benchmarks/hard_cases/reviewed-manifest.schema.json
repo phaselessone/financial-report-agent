@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "reviewed-manifest.schema.json",
   "title": "Reviewed hard-case benchmark manifest",
+  "description": "Structural reviewed-manifest contract. Formal publication additionally requires release_attestation and runtime recomputation of every source_provenance path SHA-256 under an explicit confined source root.",
   "type": "object",
   "required": [
     "schema_version",
@@ -48,6 +49,43 @@
       "type": "object",
       "minProperties": 1,
       "additionalProperties": {"type": "integer", "minimum": 0}
+    },
+    "release_attestation": {
+      "type": "object",
+      "description": "Human release attestation. Optional for legacy structural fixtures, but required by the formal reviewed-run CLI.",
+      "additionalProperties": false,
+      "required": ["status", "reviewer_id", "review_batch", "reviewed_at"],
+      "properties": {
+        "status": {"const": "reviewed"},
+        "reviewer_id": {"type": "string", "minLength": 1},
+        "review_batch": {"type": "string", "minLength": 1},
+        "reviewed_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "source_verification": {
+      "type": "object",
+      "readOnly": true,
+      "description": "Validator-derived runtime evidence; input manifests must not self-report it.",
+      "additionalProperties": false,
+      "required": ["status", "mode", "sources"],
+      "properties": {
+        "status": {"const": "VERIFIED"},
+        "mode": {"const": "recomputed-local-file-sha256"},
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source_id", "path", "sha256"],
+            "properties": {
+              "source_id": {"type": "string", "minLength": 1},
+              "path": {"type": "string", "minLength": 1},
+              "sha256": {"$ref": "#/$defs/sha256"}
+            }
+          }
+        }
+      }
     },
     "coverage": {
       "type": "object",

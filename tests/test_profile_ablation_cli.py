@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -13,6 +14,7 @@ import run_profile_ablation as run_profile_ablation_module
 from run_profile_ablation import (
     _build_profile_executor,
     _corpus_hash,
+    _load_benchmark,
     _load_optional_semantic_scorer,
     _materialize_contract_oracle_chunks,
     _require_structured_context,
@@ -27,7 +29,11 @@ from src.agent.semantic_policy import CalibratedSemanticScorer
 from src.evaluation.eval_bundle import build_corpus_asset_manifest
 from src.evaluation.hard_case_benchmark import load_cases
 from src.evaluation.run_identity import file_sha256, hash_benchmark_rows, hash_case_ids
-from tests.test_hard_case_benchmark import _reviewed_case, _reviewed_manifest
+from tests.test_hard_case_benchmark import (
+    _reviewed_asset_inputs,
+    _reviewed_case,
+    _reviewed_manifest,
+)
 
 
 def test_cli_help_exposes_reviewed_inputs_and_reproducibility_controls() -> None:
@@ -43,6 +49,7 @@ def test_cli_help_exposes_reviewed_inputs_and_reproducibility_controls() -> None
     assert completed.returncode == 0, completed.stderr
     assert "--cases-path" in completed.stdout
     assert "--reviewed-manifest-path" in completed.stdout
+    assert "--reviewed-source-root" in completed.stdout
     assert "--chunks-path" in completed.stdout
     assert "--contract-oracle" in completed.stdout
     assert "--offline-contract" in completed.stdout
@@ -54,6 +61,76 @@ def test_cli_help_exposes_reviewed_inputs_and_reproducibility_controls() -> None
     assert "--facts-path" in completed.stdout
     assert "--llm-model-revision" in completed.stdout
     assert "--overwrite" in completed.stdout
+
+
+def _write_reviewed_cli_assets(tmp_path: Path) -> tuple[Path, Path, Path, dict]:
+    cases = [_reviewed_case()]
+    manifest, source_root, _ = _reviewed_asset_inputs(tmp_path, cases)
+    cases_path = tmp_path / "reviewed-cases.jsonl"
+    manifest_path = tmp_path / "reviewed-manifest.json"
+    cases_path.write_text(
+        "".join(json.dumps(case, ensure_ascii=False) + "\n" for case in cases),
+        encoding="utf-8",
+    )
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return cases_path, manifest_path, source_root, manifest
+
+
+def test_reviewed_cli_requires_source_root_and_release_attestation(tmp_path: Path) -> None:
+    cases_path, manifest_path, source_root, manifest = _write_reviewed_cli_assets(tmp_path)
+    args_without_root = build_parser().parse_args(
+        [
+            "--cases-path",
+            str(cases_path),
+            "--reviewed-manifest-path",
+            str(manifest_path),
+        ]
+    )
+    with pytest.raises(ValueError, match="require --reviewed-source-root"):
+        _load_benchmark(args_without_root)
+
+    manifest.pop("release_attestation")
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    args_without_attestation = build_parser().parse_args(
+        [
+            "--cases-path",
+            str(cases_path),
+            "--reviewed-manifest-path",
+            str(manifest_path),
+            "--reviewed-source-root",
+            str(source_root),
+        ]
+    )
+    with pytest.raises(ValueError, match="requires release_attestation"):
+        _load_benchmark(args_without_attestation)
+
+
+def test_reviewed_cli_returns_runtime_verified_attested_manifest(tmp_path: Path) -> None:
+    cases_path, manifest_path, source_root, _ = _write_reviewed_cli_assets(tmp_path)
+    args = build_parser().parse_args(
+        [
+            "--cases-path",
+            str(cases_path),
+            "--reviewed-manifest-path",
+            str(manifest_path),
+            "--reviewed-source-root",
+            str(source_root),
+        ]
+    )
+
+    cases, manifest = _load_benchmark(args)
+
+    assert len(cases) == 1
+    assert manifest is not None
+    assert manifest.source_files_verified is True
+    assert manifest.release_attestation_validated is True
+    assert manifest["source_verification"]["status"] == "VERIFIED"
 
 
 def test_base_identity_captures_one_context_and_leaves_treatments_empty() -> None:
@@ -312,14 +389,24 @@ def test_semantic_cli_activates_exact_local_scorer_and_binds_hashes(
     report = {
         "calibrated": True,
         "precision_constraint_satisfied": True,
+        "positive_support_constraint_satisfied": True,
         "coverage_constraint_satisfied": True,
         "threshold": 0.9,
-        "metrics": {"precision": 0.98},
-        "calibration_config": {"min_precision": 0.95},
-        "label_contract": {"review_status": "reviewed"},
+        "metrics": {"precision": 0.98, "tp": 49, "fp": 1},
+        "calibration_config": {
+            "min_precision": 0.95,
+            "min_predicted_positives": 5,
+            "min_true_positives": 5,
+        },
+        "label_contract": {
+            "review_status": "reviewed",
+            "content_hash_binding": "sha256",
+        },
         "labels_sha256": "a" * 64,
         "scorer_kind": "directional_nli",
         "scorer_identity": identity,
+        "calibrated_statuses": ["ENTAILED"],
+        "contradiction_state_change_allowed": False,
     }
     report_path = tmp_path / "calibration.json"
     config_path = tmp_path / "scorer.json"
@@ -329,6 +416,8 @@ def test_semantic_cli_activates_exact_local_scorer_and_binds_hashes(
         "sample_id": "sample-1",
         "claim_id": "claim-1",
         "evidence_id": "evidence-1",
+        "claim_sha256": hashlib.sha256(b"reviewed claim 1").hexdigest(),
+        "evidence_sha256": hashlib.sha256(b"reviewed evidence 1").hexdigest(),
         "score": 0.97,
         "label": "ENTAILED",
         "source_ref": "review-vault://sample-1",
@@ -420,6 +509,8 @@ def test_semantic_cli_rejects_blocked_readiness_before_activation(
                 "sample_id": "sample-1",
                 "claim_id": "claim-1",
                 "evidence_id": "evidence-1",
+                "claim_sha256": hashlib.sha256(b"reviewed claim 1").hexdigest(),
+                "evidence_sha256": hashlib.sha256(b"reviewed evidence 1").hexdigest(),
                 "score": 0.97,
                 "label": "ENTAILED",
                 "source_ref": "review-vault://sample-1",
@@ -439,14 +530,24 @@ def test_semantic_cli_rejects_blocked_readiness_before_activation(
     report = {
         "calibrated": True,
         "precision_constraint_satisfied": True,
+        "positive_support_constraint_satisfied": True,
         "coverage_constraint_satisfied": True,
         "threshold": 0.9,
-        "metrics": {"precision": 0.98},
-        "calibration_config": {"min_precision": 0.95},
-        "label_contract": {"review_status": "reviewed"},
+        "metrics": {"precision": 0.98, "tp": 49, "fp": 1},
+        "calibration_config": {
+            "min_precision": 0.95,
+            "min_predicted_positives": 5,
+            "min_true_positives": 5,
+        },
+        "label_contract": {
+            "review_status": "reviewed",
+            "content_hash_binding": "sha256",
+        },
         "labels_sha256": labels_sha256,
         "scorer_kind": "directional_nli",
         "scorer_identity": identity,
+        "calibrated_statuses": ["ENTAILED"],
+        "contradiction_state_change_allowed": False,
     }
     report_path.write_text(json.dumps(report), encoding="utf-8")
     readiness_path.write_text(
@@ -507,6 +608,8 @@ def test_semantic_cli_rejects_calibration_hash_not_matching_actual_labels(
                 "sample_id": "sample-1",
                 "claim_id": "claim-1",
                 "evidence_id": "evidence-1",
+                "claim_sha256": hashlib.sha256(b"reviewed claim 1").hexdigest(),
+                "evidence_sha256": hashlib.sha256(b"reviewed evidence 1").hexdigest(),
                 "score": 0.97,
                 "label": "ENTAILED",
                 "source_ref": "review-vault://sample-1",
@@ -526,14 +629,24 @@ def test_semantic_cli_rejects_calibration_hash_not_matching_actual_labels(
     report = {
         "calibrated": True,
         "precision_constraint_satisfied": True,
+        "positive_support_constraint_satisfied": True,
         "coverage_constraint_satisfied": True,
         "threshold": 0.9,
-        "metrics": {"precision": 0.98},
-        "calibration_config": {"min_precision": 0.95},
-        "label_contract": {"review_status": "reviewed"},
+        "metrics": {"precision": 0.98, "tp": 49, "fp": 1},
+        "calibration_config": {
+            "min_precision": 0.95,
+            "min_predicted_positives": 5,
+            "min_true_positives": 5,
+        },
+        "label_contract": {
+            "review_status": "reviewed",
+            "content_hash_binding": "sha256",
+        },
         "labels_sha256": "0" * 64,
         "scorer_kind": "directional_nli",
         "scorer_identity": identity,
+        "calibrated_statuses": ["ENTAILED"],
+        "contradiction_state_change_allowed": False,
     }
     report_path.write_text(json.dumps(report), encoding="utf-8")
     readiness_path.write_text(

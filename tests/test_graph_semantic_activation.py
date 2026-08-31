@@ -25,14 +25,24 @@ def _calibration_report() -> dict[str, object]:
     return {
         "calibrated": True,
         "precision_constraint_satisfied": True,
+        "positive_support_constraint_satisfied": True,
         "coverage_constraint_satisfied": True,
         "threshold": 0.9,
-        "metrics": {"precision": 0.97},
-        "calibration_config": {"min_precision": 0.95},
-        "label_contract": {"review_status": "reviewed"},
+        "metrics": {"precision": 1.0, "tp": 10, "fp": 0},
+        "calibration_config": {
+            "min_precision": 0.95,
+            "min_predicted_positives": 5,
+            "min_true_positives": 5,
+        },
+        "label_contract": {
+            "review_status": "reviewed",
+            "content_hash_binding": "sha256",
+        },
         "labels_sha256": "a" * 64,
         "scorer_kind": "directional_nli",
         "scorer_identity": _scorer_identity(),
+        "calibrated_statuses": ["ENTAILED"],
+        "contradiction_state_change_allowed": False,
     }
 
 

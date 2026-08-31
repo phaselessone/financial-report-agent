@@ -12,6 +12,7 @@ import json
 import math
 import re
 from collections.abc import Iterable, Mapping, Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,8 @@ DEFAULT_SEMANTIC_THRESHOLDS = tuple(round(index / 100, 2) for index in range(50,
 DEFAULT_MIN_SEMANTIC_LABELS = 20
 DEFAULT_MIN_ENTAILED_LABELS = 5
 DEFAULT_MIN_NON_ENTAILED_LABELS = 5
+DEFAULT_MIN_PREDICTED_POSITIVES = 5
+DEFAULT_MIN_TRUE_POSITIVES = 5
 REQUIRED_SEMANTIC_LABEL_FIELDS = frozenset(
     {
         "sample_id",
@@ -39,6 +42,25 @@ REQUIRED_SEMANTIC_LABEL_FIELDS = frozenset(
     }
 )
 SEMANTIC_LABELS = frozenset({"ENTAILED", "CONTRADICTED", "INSUFFICIENT"})
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+ISO_DATETIME_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$"
+)
+MUTABLE_SCORER_REVISIONS = frozenset(
+    {
+        "current",
+        "default",
+        "dev",
+        "development",
+        "head",
+        "latest",
+        "main",
+        "master",
+        "release",
+        "stable",
+        "unversioned",
+    }
+)
 
 
 class SemanticLabelValidationError(ValueError):
@@ -56,7 +78,9 @@ SemanticLabelSchemaError = SemanticLabelValidationError
 def _is_synthetic(item: Mapping[str, Any]) -> bool:
     for key in ("synthetic", "is_synthetic"):
         value = item.get(key)
-        if value is True or (isinstance(value, str) and value.strip().lower() in {"1", "true", "yes"}):
+        if value is True or (
+            isinstance(value, str) and value.strip().lower() in {"1", "true", "yes"}
+        ):
             return True
     for key in (
         "sample_type",
@@ -85,6 +109,75 @@ def _finite_score(value: Any) -> float | None:
     return score if math.isfinite(score) and 0.0 <= score <= 1.0 else None
 
 
+def _validate_reviewed_at(value: str, *, prefix: str, errors: list[str]) -> None:
+    if not value:
+        errors.append(f"{prefix}: reviewed_at must be non-empty")
+        return
+    if not ISO_DATETIME_RE.fullmatch(value):
+        if "T" in value:
+            errors.append(f"{prefix}: reviewed_at must include a timezone")
+        else:
+            errors.append(f"{prefix}: reviewed_at must be an ISO-8601 date-time")
+        return
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        errors.append(f"{prefix}: reviewed_at must be an ISO-8601 date-time")
+        return
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        errors.append(f"{prefix}: reviewed_at must include a timezone")
+
+
+def _is_immutable_revision(value: str) -> bool:
+    normalized = value.strip().casefold()
+    return bool(
+        normalized
+        and normalized not in MUTABLE_SCORER_REVISIONS
+        and not normalized.startswith("refs/heads/")
+        and not normalized.startswith("heads/")
+    )
+
+
+def _content_sha256(
+    item: dict[str, Any],
+    *,
+    text_field: str,
+    hash_field: str,
+    prefix: str,
+    errors: list[str],
+) -> str | None:
+    raw_text = item.get(text_field)
+    text: str | None = None
+    if raw_text is not None:
+        if not isinstance(raw_text, str):
+            errors.append(f"{prefix}: {text_field} must be a string")
+        elif raw_text.strip():
+            text = raw_text
+        else:
+            errors.append(f"{prefix}: {text_field} must be non-empty when provided")
+
+    raw_digest = item.get(hash_field)
+    digest = str(raw_digest or "").strip().lower()
+    if raw_digest is not None and not SHA256_RE.fullmatch(digest):
+        errors.append(f"{prefix}: {hash_field} must be a SHA-256 hex digest")
+        digest = ""
+
+    if text is None and not digest:
+        errors.append(f"{prefix}: {text_field} or {hash_field} must bind content")
+        return None
+
+    if text is not None:
+        derived = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        if digest and digest != derived:
+            errors.append(f"{prefix}: {hash_field} does not match {text_field}")
+            return None
+        digest = derived
+        item[text_field] = text
+
+    item[hash_field] = digest
+    return digest
+
+
 def validate_semantic_labels(samples: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Validate and normalize reviewed semantic labels."""
 
@@ -92,6 +185,8 @@ def validate_semantic_labels(samples: Iterable[Mapping[str, Any]]) -> list[dict[
     normalized: list[dict[str, Any]] = []
     seen_sample_ids: set[str] = set()
     scorer_identities: set[tuple[str, str, str, str]] = set()
+    claim_hashes_by_id: dict[str, str] = {}
+    evidence_hashes_by_id: dict[str, str] = {}
     try:
         raw_samples = list(samples)
     except TypeError as exc:
@@ -133,15 +228,14 @@ def validate_semantic_labels(samples: Iterable[Mapping[str, Any]]) -> list[dict[
             errors.append(f"{prefix}: source_ref must be non-empty")
         if not reviewer_id:
             errors.append(f"{prefix}: reviewer_id must be non-empty")
-        if not reviewed_at:
-            errors.append(f"{prefix}: reviewed_at must be non-empty")
+        _validate_reviewed_at(reviewed_at, prefix=prefix, errors=errors)
         if scorer_kind != "directional_nli":
             errors.append(f"{prefix}: scorer_kind must equal 'directional_nli'")
         if not scorer_model:
             errors.append(f"{prefix}: scorer_model must be non-empty")
-        if not scorer_revision:
-            errors.append(f"{prefix}: scorer_revision must be non-empty")
-        if not re.fullmatch(r"[0-9a-f]{64}", scorer_config_sha256):
+        if not _is_immutable_revision(scorer_revision):
+            errors.append(f"{prefix}: scorer_revision must identify an immutable revision")
+        if not SHA256_RE.fullmatch(scorer_config_sha256):
             errors.append(f"{prefix}: scorer_config_sha256 must be a SHA-256 hex digest")
         scorer_identities.add((scorer_kind, scorer_model, scorer_revision, scorer_config_sha256))
         if item.get("label") not in SEMANTIC_LABELS:
@@ -151,6 +245,31 @@ def validate_semantic_labels(samples: Iterable[Mapping[str, Any]]) -> list[dict[
             errors.append(f"{prefix}: score must be a finite number in [0, 1]")
         if item.get("review_status") != "reviewed":
             errors.append(f"{prefix}: review_status must equal 'reviewed'")
+
+        claim_sha256 = _content_sha256(
+            item,
+            text_field="claim_text",
+            hash_field="claim_sha256",
+            prefix=prefix,
+            errors=errors,
+        )
+        evidence_sha256 = _content_sha256(
+            item,
+            text_field="evidence_text",
+            hash_field="evidence_sha256",
+            prefix=prefix,
+            errors=errors,
+        )
+        if claim_id and claim_sha256:
+            previous = claim_hashes_by_id.setdefault(claim_id, claim_sha256)
+            if previous != claim_sha256:
+                errors.append(f"{prefix}: claim_id {claim_id!r} is bound to different content")
+        if evidence_id and evidence_sha256:
+            previous = evidence_hashes_by_id.setdefault(evidence_id, evidence_sha256)
+            if previous != evidence_sha256:
+                errors.append(
+                    f"{prefix}: evidence_id {evidence_id!r} is bound to different content"
+                )
         item.update(
             {
                 "sample_id": sample_id,
@@ -191,9 +310,13 @@ def load_reviewed_semantic_labels(path: str | Path) -> list[dict[str, Any]]:
                 try:
                     value = json.loads(line)
                 except json.JSONDecodeError as exc:
-                    raise SemanticLabelValidationError([f"line {line_number}: invalid JSON: {exc.msg}"]) from exc
+                    raise SemanticLabelValidationError(
+                        [f"line {line_number}: invalid JSON: {exc.msg}"]
+                    ) from exc
                 if not isinstance(value, Mapping):
-                    raise SemanticLabelValidationError([f"line {line_number}: expected a JSON object"])
+                    raise SemanticLabelValidationError(
+                        [f"line {line_number}: expected a JSON object"]
+                    )
                 rows.append(dict(value))
     except OSError as exc:
         raise SemanticLabelValidationError([f"cannot read {source}: {exc}"]) from exc
@@ -214,7 +337,9 @@ def _label(item: Mapping[str, Any]) -> int:
     return int(bool(raw))
 
 
-def threshold_metrics(samples: Iterable[Mapping[str, Any]], threshold: float) -> dict[str, float | int]:
+def threshold_metrics(
+    samples: Iterable[Mapping[str, Any]], threshold: float
+) -> dict[str, float | int]:
     """Compute confusion counts and precision/recall/F1 at a score threshold."""
 
     if not 0.0 <= float(threshold) <= 1.0:
@@ -259,35 +384,78 @@ def calibrate_semantic_threshold(
     thresholds: Sequence[float] | None = None,
     objective: str = "f1",
     min_precision: float | None = 0.95,
+    min_predicted_positives: int = DEFAULT_MIN_PREDICTED_POSITIVES,
+    min_true_positives: int = DEFAULT_MIN_TRUE_POSITIVES,
     default: float = DEFAULT_SEMANTIC_THRESHOLD,
 ) -> dict[str, Any]:
     """Choose a precision-first threshold from semantic-score samples."""
 
     if not 0.0 <= float(default) <= 1.0:
         raise ValueError("default must be between 0 and 1")
-    if not samples:
-        return {
-            "threshold": float(default),
-            "objective": objective,
-            "sample_count": 0,
-            "calibrated": False,
-            "metrics": threshold_metrics([], default),
-            "candidates": [],
-            "precision_constraint_satisfied": False if min_precision is not None else None,
-        }
-    if thresholds is None:
-        thresholds = DEFAULT_SEMANTIC_THRESHOLDS
-    candidates = [float(value) for value in thresholds]
-    if not candidates or any(not math.isfinite(value) or not 0.0 <= value <= 1.0 for value in candidates):
-        raise ValueError("thresholds must contain finite values between 0 and 1")
     key = objective.lower().strip()
     if key not in {"f1", "precision", "recall", "balanced_accuracy"}:
         raise ValueError("objective must be f1, precision, recall, or balanced_accuracy")
     if min_precision is not None and not 0.0 <= float(min_precision) <= 1.0:
         raise ValueError("min_precision must be between 0 and 1")
+    for name, value in (
+        ("min_predicted_positives", min_predicted_positives),
+        ("min_true_positives", min_true_positives),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"{name} must be a non-negative integer")
+    if not samples:
+        blocking_reasons = []
+        if min_precision is not None:
+            blocking_reasons.append("minimum_precision")
+        if min_predicted_positives:
+            blocking_reasons.append("minimum_predicted_positive_count")
+        if min_true_positives:
+            blocking_reasons.append("minimum_true_positive_count")
+        return {
+            "threshold": float(default),
+            "objective": key,
+            "sample_count": 0,
+            "calibrated": False,
+            "metrics": threshold_metrics([], default),
+            "candidates": [],
+            "precision_constraint_satisfied": False if min_precision is not None else None,
+            "positive_support_constraint_satisfied": not (
+                min_predicted_positives or min_true_positives
+            ),
+            "constraint_blocking_reasons": blocking_reasons,
+        }
+    if thresholds is None:
+        thresholds = DEFAULT_SEMANTIC_THRESHOLDS
+    candidates = [float(value) for value in thresholds]
+    if not candidates or any(
+        not math.isfinite(value) or not 0.0 <= value <= 1.0 for value in candidates
+    ):
+        raise ValueError("thresholds must contain finite values between 0 and 1")
     scored = [threshold_metrics(samples, value) for value in candidates]
-    eligible = [item for item in scored if min_precision is None or float(item["precision"]) >= float(min_precision)]
-    if min_precision is not None and not eligible:
+    precision_eligible = [
+        item
+        for item in scored
+        if min_precision is None or float(item["precision"]) >= float(min_precision)
+    ]
+    support_eligible = [
+        item
+        for item in scored
+        if int(item["tp"]) + int(item["fp"]) >= min_predicted_positives
+        and int(item["tp"]) >= min_true_positives
+    ]
+    eligible = [item for item in precision_eligible if item in support_eligible]
+    precision_satisfied = bool(precision_eligible) if min_precision is not None else None
+    support_satisfied = bool(support_eligible)
+    blocking_reasons: list[str] = []
+    if precision_satisfied is False:
+        blocking_reasons.append("minimum_precision")
+    if not any(int(item["tp"]) + int(item["fp"]) >= min_predicted_positives for item in scored):
+        blocking_reasons.append("minimum_predicted_positive_count")
+    if not any(int(item["tp"]) >= min_true_positives for item in scored):
+        blocking_reasons.append("minimum_true_positive_count")
+    if not eligible and precision_satisfied and support_satisfied:
+        blocking_reasons.append("joint_precision_positive_support")
+    if not eligible:
         return {
             "threshold": float(default),
             "objective": key,
@@ -295,10 +463,11 @@ def calibrate_semantic_threshold(
             "calibrated": False,
             "metrics": threshold_metrics(samples, default),
             "candidates": scored,
-            "precision_constraint_satisfied": False,
+            "precision_constraint_satisfied": precision_satisfied,
+            "positive_support_constraint_satisfied": support_satisfied,
+            "constraint_blocking_reasons": blocking_reasons,
         }
-    pool = eligible or scored
-    best = max(pool, key=lambda item: (float(item[key]), float(item["threshold"])))
+    best = max(eligible, key=lambda item: (float(item[key]), float(item["threshold"])))
     return {
         "threshold": float(best["threshold"]),
         "objective": key,
@@ -306,7 +475,9 @@ def calibrate_semantic_threshold(
         "calibrated": True,
         "metrics": best,
         "candidates": scored,
-        "precision_constraint_satisfied": bool(eligible) if min_precision is not None else None,
+        "precision_constraint_satisfied": precision_satisfied,
+        "positive_support_constraint_satisfied": support_satisfied,
+        "constraint_blocking_reasons": [],
     }
 
 
@@ -321,7 +492,11 @@ def calibrate_reviewed_semantic_labels(
     """Validate reviewed labels and return a precision-first calibration report."""
 
     source_path = Path(labels) if isinstance(labels, (str, Path)) else None
-    rows = load_reviewed_semantic_labels(source_path) if source_path is not None else validate_semantic_labels(labels)
+    rows = (
+        load_reviewed_semantic_labels(source_path)
+        if source_path is not None
+        else validate_semantic_labels(labels)
+    )
     report = calibrate_semantic_threshold(rows, **kwargs)
     entailed_count = sum(1 for row in rows if row["label"] == "ENTAILED")
     non_entailed_count = len(rows) - entailed_count
@@ -355,6 +530,10 @@ def calibrate_reviewed_semantic_labels(
         "candidate_thresholds": list(kwargs.get("thresholds") or DEFAULT_SEMANTIC_THRESHOLDS),
         "objective": str(kwargs.get("objective", "f1")),
         "min_precision": kwargs.get("min_precision", 0.95),
+        "min_predicted_positives": kwargs.get(
+            "min_predicted_positives", DEFAULT_MIN_PREDICTED_POSITIVES
+        ),
+        "min_true_positives": kwargs.get("min_true_positives", DEFAULT_MIN_TRUE_POSITIVES),
         "default": kwargs.get("default", DEFAULT_SEMANTIC_THRESHOLD),
         "minimum_sample_count": int(min_samples),
         "minimum_entailed_count": int(min_entailed),
@@ -374,6 +553,7 @@ def calibrate_reviewed_semantic_labels(
         "allowed_labels": sorted(SEMANTIC_LABELS),
         "review_status": "reviewed",
         "score_semantics": "entailed_confidence",
+        "content_hash_binding": "sha256",
     }
     # The single scalar score is calibrated as ENTAILED-vs-rest confidence.
     # It does not prove precision for a separate CONTRADICTED decision, so the
@@ -390,6 +570,8 @@ __all__ = [
     "DEFAULT_MIN_SEMANTIC_LABELS",
     "DEFAULT_MIN_ENTAILED_LABELS",
     "DEFAULT_MIN_NON_ENTAILED_LABELS",
+    "DEFAULT_MIN_PREDICTED_POSITIVES",
+    "DEFAULT_MIN_TRUE_POSITIVES",
     "REQUIRED_SEMANTIC_LABEL_FIELDS",
     "SEMANTIC_LABELS",
     "SemanticLabelError",

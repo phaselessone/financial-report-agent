@@ -33,6 +33,31 @@ _ALLOWED_CONFIG_FIELDS = frozenset(
         "trust_remote_code",
     }
 )
+_MUTABLE_REVISIONS = frozenset(
+    {
+        "current",
+        "default",
+        "dev",
+        "development",
+        "head",
+        "latest",
+        "main",
+        "master",
+        "release",
+        "stable",
+        "unversioned",
+    }
+)
+
+
+def _is_immutable_revision(value: str) -> bool:
+    normalized = value.strip().casefold()
+    return bool(
+        normalized
+        and normalized not in _MUTABLE_REVISIONS
+        and not normalized.startswith("refs/heads/")
+        and not normalized.startswith("heads/")
+    )
 
 
 def normalize_directional_nli_config(config: Mapping[str, Any]) -> dict[str, Any]:
@@ -50,8 +75,12 @@ def normalize_directional_nli_config(config: Mapping[str, Any]) -> dict[str, Any
     revision = str(config.get("revision") or "").strip()
     if kind != "directional_nli":
         raise DirectionalNLIConfigError("kind must equal directional_nli")
-    if not model or not revision:
-        raise DirectionalNLIConfigError("model and revision must be non-empty")
+    if not model:
+        raise DirectionalNLIConfigError("model must be non-empty")
+    if not _is_immutable_revision(revision):
+        raise DirectionalNLIConfigError(
+            "revision must identify an immutable model revision, not a moving branch"
+        )
 
     label_id = config.get("entailment_label_id")
     if isinstance(label_id, bool):
@@ -71,9 +100,7 @@ def normalize_directional_nli_config(config: Mapping[str, Any]) -> dict[str, Any
     try:
         max_length = int(max_length)
     except (TypeError, ValueError) as exc:
-        raise DirectionalNLIConfigError(
-            "max_length must be an integer between 8 and 4096"
-        ) from exc
+        raise DirectionalNLIConfigError("max_length must be an integer between 8 and 4096") from exc
     if not 8 <= max_length <= 4096:
         raise DirectionalNLIConfigError("max_length must be an integer between 8 and 4096")
 
@@ -153,9 +180,7 @@ def build_local_directional_nli_scorer(config: Mapping[str, Any]) -> Directional
         "trust_remote_code": False,
     }
     tokenizer = AutoTokenizer.from_pretrained(normalized["model"], **load_kwargs)
-    model = AutoModelForSequenceClassification.from_pretrained(
-        normalized["model"], **load_kwargs
-    )
+    model = AutoModelForSequenceClassification.from_pretrained(normalized["model"], **load_kwargs)
     label_id = int(normalized["entailment_label_id"])
     num_labels = int(getattr(model.config, "num_labels", 0) or 0)
     if num_labels <= label_id:

@@ -108,6 +108,10 @@ def enforce_historical_evidence_gate(
         return None
 
     from scripts.historical_full_evidence_gate import run as run_historical_gate
+    from src.evaluation.historical_evidence_audit import (
+        EXPECTED_STAGE6_CORPUS_ID,
+        EXPECTED_STAGE6_LEGACY_SHA1,
+    )
 
     gate_args = argparse.Namespace(
         seed_path=seed_path,
@@ -126,8 +130,11 @@ def enforce_historical_evidence_gate(
     attestation = report.get("attestation")
     corpus_attestation = report.get("corpus_attestation")
     candidate_corpus = report.get("candidate_corpus")
+    historical_identity = report.get("historical_release_identity")
     gate_ready = (
         report.get("status") == "READY"
+        and report.get("formal_release_ready") is True
+        and report.get("diagnostic_only") is False
         and report.get("proof_level")
         in {"CONTENT_ANCHORED", "MIXED_CONTENT_AND_REVIEW_ATTESTATION"}
         and isinstance(attestation, dict)
@@ -136,6 +143,12 @@ def enforce_historical_evidence_gate(
         and corpus_attestation.get("validated") is True
         and isinstance(candidate_corpus, dict)
         and candidate_corpus.get("hash_pinned") is True
+        and isinstance(historical_identity, dict)
+        and historical_identity.get("corpus_id") == EXPECTED_STAGE6_CORPUS_ID
+        and historical_identity.get("expected_legacy_sha1")
+        == EXPECTED_STAGE6_LEGACY_SHA1
+        and historical_identity.get("legacy_sha1_matches") is True
+        and historical_identity.get("candidate_path_is_canonical") is True
     )
     if not gate_ready:
         reasons = report.get("blocking_reasons")

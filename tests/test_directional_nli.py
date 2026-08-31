@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from src.agent.directional_nli import (
@@ -43,6 +46,10 @@ def test_directional_nli_identity_binds_normalized_runtime_config() -> None:
         ({"trust_remote_code": True}, "trust_remote_code"),
         ({"entailment_label_id": -1}, "entailment_label_id"),
         ({"unknown": "value"}, "unknown fields"),
+        ({"revision": "main"}, "immutable"),
+        ({"revision": "MASTER"}, "immutable"),
+        ({"revision": "refs/heads/release"}, "immutable"),
+        ({"revision": "latest"}, "immutable"),
     ],
 )
 def test_directional_nli_config_fails_closed(overrides, match) -> None:
@@ -71,3 +78,16 @@ def test_directional_scorer_rejects_invalid_backend_probability() -> None:
     scorer = DirectionalNLIScorer(_config(), lambda _premise, _hypothesis: 1.1)
     with pytest.raises(ValueError, match="outside"):
         scorer("claim", "evidence")
+
+
+def test_directional_nli_schema_forbids_known_mutable_revisions() -> None:
+    schema_path = (
+        Path(__file__).resolve().parents[1]
+        / "benchmarks"
+        / "semantic"
+        / "directional-nli-config.schema.json"
+    )
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    mutable_revisions = set(schema["properties"]["revision"]["not"]["enum"])
+    assert {"main", "master", "latest", "default", "unversioned"} <= mutable_revisions

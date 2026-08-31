@@ -393,6 +393,12 @@ def _write_labels(path: Path, *, valid: bool = True, single_class: bool = False)
                 "sample_id": f"s{index}",
                 "claim_id": f"c{index}",
                 "evidence_id": f"e{index}",
+                "claim_sha256": hashlib.sha256(
+                    f"reviewed claim {index}".encode("utf-8")
+                ).hexdigest(),
+                "evidence_sha256": hashlib.sha256(
+                    f"reviewed evidence {index}".encode("utf-8")
+                ).hexdigest(),
                 "score": 0.95 if entailed else 0.10,
                 "label": "ENTAILED" if entailed else "CONTRADICTED",
                 "source_ref": f"review://batch-1/{index}",

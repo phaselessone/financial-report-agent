@@ -19,6 +19,7 @@ import json
 import os
 import re
 from collections import Counter, defaultdict
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -30,6 +31,13 @@ CHUNK_ID_RE = re.compile(
     r"^(?P<doc_id>.+)-(?P<strategy>fixed_window|title_aware|table_protected)-(?P<ordinal>[cp]\d{4})$"
 )
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+SHA1_RE = re.compile(r"^[0-9a-f]{40}$")
+RFC3339_DATETIME_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
+)
+CANONICAL_STAGE6_ASSET_PATH = "tmp_stage6_data/chunks/chunks.jsonl"
+EXPECTED_STAGE6_CORPUS_ID = "corpus:4ff7ba48fd38"
+EXPECTED_STAGE6_LEGACY_SHA1 = "4ff7ba48fd38a4400e581fac32c43c4217de1ece"
 
 
 class HistoricalEvidenceAuditError(ValueError):
@@ -54,6 +62,50 @@ def _required_sha256(value: Any, *, label: str) -> str:
             f"stage6 corpus attestation {label} must be a 64-character SHA-256"
         )
     return digest
+
+
+def _required_sha1(value: Any, *, label: str) -> str:
+    digest = str(value or "").strip().lower()
+    if not SHA1_RE.fullmatch(digest):
+        raise HistoricalEvidenceAuditError(
+            f"stage6 corpus attestation {label} must be a 40-character SHA-1"
+        )
+    return digest
+
+
+def _required_datetime(value: Any, *, label: str) -> str:
+    text = _required_text(value, label=label)
+    if not RFC3339_DATETIME_RE.fullmatch(text):
+        raise HistoricalEvidenceAuditError(
+            f"stage6 corpus attestation {label} must be an RFC-3339 date-time with timezone"
+        )
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HistoricalEvidenceAuditError(
+            f"stage6 corpus attestation {label} must be an ISO-8601 date-time"
+        ) from exc
+    if parsed.tzinfo is None:
+        raise HistoricalEvidenceAuditError(
+            f"stage6 corpus attestation {label} must include a timezone"
+        )
+    return text
+
+
+def _reject_unknown_fields(payload: dict[str, Any], *, allowed: set[str], label: str) -> None:
+    unknown = sorted(set(payload) - allowed)
+    if unknown:
+        raise HistoricalEvidenceAuditError(
+            f"stage6 corpus attestation {label} contains unknown fields: {unknown}"
+        )
+
+
+def sha1_file(path: Path) -> str:
+    digest = hashlib.sha1()  # noqa: S324 - legacy identity, not a security signature
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def sha256_file(path: Path) -> str:
@@ -86,6 +138,19 @@ def validate_stage6_corpus_attestation(
         ) from exc
     if not isinstance(payload, dict):
         raise HistoricalEvidenceAuditError("stage6 corpus attestation must contain a JSON object")
+    _reject_unknown_fields(
+        payload,
+        allowed={
+            "schema_version",
+            "corpus_id",
+            "benchmark_profile",
+            "asset",
+            "source",
+            "review",
+            "benchmark_binding",
+        },
+        label="root",
+    )
     if payload.get("schema_version") != 1:
         raise HistoricalEvidenceAuditError("stage6 corpus attestation schema_version must equal 1")
     if payload.get("benchmark_profile") != "historical-full-raw":
@@ -93,17 +158,37 @@ def validate_stage6_corpus_attestation(
             "stage6 corpus attestation benchmark_profile must equal 'historical-full-raw'"
         )
     corpus_id = _required_text(payload.get("corpus_id"), label="corpus_id")
+    if corpus_id != EXPECTED_STAGE6_CORPUS_ID:
+        raise HistoricalEvidenceAuditError(
+            "stage6 corpus attestation corpus_id does not match the historical release: "
+            f"expected {EXPECTED_STAGE6_CORPUS_ID}, got {corpus_id}"
+        )
 
     asset = payload.get("asset")
     if not isinstance(asset, dict):
         raise HistoricalEvidenceAuditError("stage6 corpus attestation asset must be an object")
+    _reject_unknown_fields(
+        asset,
+        allowed={"path", "legacy_sha1", "sha256", "format", "chunk_count"},
+        label="asset",
+    )
     asset_path_text = _required_text(asset.get("path"), label="asset.path")
+    if asset_path_text != CANONICAL_STAGE6_ASSET_PATH:
+        raise HistoricalEvidenceAuditError(
+            f"stage6 corpus attestation asset.path must equal '{CANONICAL_STAGE6_ASSET_PATH}'"
+        )
     asset_path = Path(asset_path_text)
     if not asset_path.is_absolute():
         asset_path = repo_root / asset_path
     if _normalized_path(asset_path) != _normalized_path(candidate_chunks_path):
         raise HistoricalEvidenceAuditError(
             "stage6 corpus attestation asset.path does not match the candidate chunks path"
+        )
+    expected_chunks_sha1 = _required_sha1(asset.get("legacy_sha1"), label="asset.legacy_sha1")
+    if expected_chunks_sha1 != EXPECTED_STAGE6_LEGACY_SHA1:
+        raise HistoricalEvidenceAuditError(
+            "stage6 corpus attestation legacy SHA-1 does not match the historical release: "
+            f"expected {EXPECTED_STAGE6_LEGACY_SHA1}, got {expected_chunks_sha1}"
         )
     expected_chunks_sha256 = _required_sha256(asset.get("sha256"), label="asset.sha256")
     if asset.get("format") != "chunks-jsonl":
@@ -118,6 +203,12 @@ def validate_stage6_corpus_attestation(
     if not candidate_chunks_path.is_file():
         raise HistoricalEvidenceAuditError(
             f"stage6 corpus attestation candidate asset is missing: {candidate_chunks_path}"
+        )
+    actual_chunks_sha1 = sha1_file(candidate_chunks_path)
+    if actual_chunks_sha1 != expected_chunks_sha1:
+        raise HistoricalEvidenceAuditError(
+            "stage6 corpus attestation candidate legacy SHA-1 mismatch: "
+            f"expected {expected_chunks_sha1}, got {actual_chunks_sha1}"
         )
     actual_chunks_sha256 = sha256_file(candidate_chunks_path)
     if actual_chunks_sha256 != expected_chunks_sha256:
@@ -135,24 +226,35 @@ def validate_stage6_corpus_attestation(
     source = payload.get("source")
     if not isinstance(source, dict):
         raise HistoricalEvidenceAuditError("stage6 corpus attestation source must be an object")
+    _reject_unknown_fields(
+        source,
+        allowed={"origin", "owner", "acquired_at", "source_ref"},
+        label="source",
+    )
     source_record = {
-        field: _required_text(source.get(field), label=f"source.{field}")
-        for field in ("origin", "owner", "acquired_at", "source_ref")
+        "origin": _required_text(source.get("origin"), label="source.origin"),
+        "owner": _required_text(source.get("owner"), label="source.owner"),
+        "acquired_at": _required_datetime(source.get("acquired_at"), label="source.acquired_at"),
+        "source_ref": _required_text(source.get("source_ref"), label="source.source_ref"),
     }
 
     review = payload.get("review")
     if not isinstance(review, dict):
         raise HistoricalEvidenceAuditError("stage6 corpus attestation review must be an object")
+    _reject_unknown_fields(
+        review,
+        allowed={"status", "reviewer_id", "review_batch", "reviewed_at"},
+        label="review",
+    )
     if review.get("status") != "reviewed":
         raise HistoricalEvidenceAuditError(
             "stage6 corpus attestation review.status must equal 'reviewed'"
         )
     review_record = {
         "status": "reviewed",
-        **{
-            field: _required_text(review.get(field), label=f"review.{field}")
-            for field in ("reviewer_id", "review_batch", "reviewed_at")
-        },
+        "reviewer_id": _required_text(review.get("reviewer_id"), label="review.reviewer_id"),
+        "review_batch": _required_text(review.get("review_batch"), label="review.review_batch"),
+        "reviewed_at": _required_datetime(review.get("reviewed_at"), label="review.reviewed_at"),
     }
 
     binding = payload.get("benchmark_binding")
@@ -160,6 +262,11 @@ def validate_stage6_corpus_attestation(
         raise HistoricalEvidenceAuditError(
             "stage6 corpus attestation benchmark_binding must be an object"
         )
+    _reject_unknown_fields(
+        binding,
+        allowed={"seed_sha256", "historical_results_sha256"},
+        label="benchmark_binding",
+    )
     expected_seed_sha256 = _required_sha256(
         binding.get("seed_sha256"), label="benchmark_binding.seed_sha256"
     )
@@ -187,6 +294,7 @@ def validate_stage6_corpus_attestation(
         "corpus_id": corpus_id,
         "benchmark_profile": "historical-full-raw",
         "asset_path": str(candidate_chunks_path),
+        "asset_sha1": actual_chunks_sha1,
         "asset_sha256": actual_chunks_sha256,
         "chunk_count": actual_chunk_count,
         "source": source_record,
@@ -217,7 +325,9 @@ def _indexed_unique_rows(rows: list[dict[str, Any]], *, label: str) -> dict[str,
         if not question_id:
             raise HistoricalEvidenceAuditError(f"{label} row {index} has no question_id")
         if question_id in indexed:
-            raise HistoricalEvidenceAuditError(f"{label} contains duplicate question_id {question_id!r}")
+            raise HistoricalEvidenceAuditError(
+                f"{label} contains duplicate question_id {question_id!r}"
+            )
         indexed[question_id] = row
     return indexed
 
@@ -523,7 +633,9 @@ def audit_historical_evidence(
             f"candidate corpus SHA-256 mismatch: expected {expected_hash}, got {actual_corpus_hash}"
         )
     if duplicate_chunk_ids:
-        blocking_reasons.append(f"candidate corpus contains {len(duplicate_chunk_ids)} duplicate chunk_ids")
+        blocking_reasons.append(
+            f"candidate corpus contains {len(duplicate_chunk_ids)} duplicate chunk_ids"
+        )
     blocked_chunk_count = status_counts.get("BLOCKED", 0)
     if blocked_chunk_count:
         blocking_reasons.append(f"{blocked_chunk_count} gold chunks failed content/identity checks")

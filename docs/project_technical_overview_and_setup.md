@@ -42,7 +42,9 @@
 - 正式 semantic 激活只接受 reviewed readiness/calibration JSON 加一个匹配
   `benchmarks/semantic/directional-nli-config.schema.json` 的本地 scorer config；配置
   hash、labels hash、calibration report hash 和模型 revision 全部进入 RunIdentity，且
-  强制 `local_files_only=true`、`trust_remote_code=false`。
+  强制 `local_files_only=true`、`trust_remote_code=false`。Reviewed rows 还必须绑定
+  claim/evidence 正文或 SHA-256、使用带时区时间戳并拒绝 moving revision；precision
+  校准至少需要 5 个 predicted positives 和 5 个 true positives。
 - 当前复现与验收命令以本文第 8 节和 README 为准；第 6、9 节明确属于
   **历史快照（非当前验收）**。
 
@@ -463,9 +465,13 @@ python scripts/historical_full_evidence_gate.py \
   --chunks-path tmp_stage6_data/chunks/chunks.jsonl
 ```
 
-该门禁同时核对 corpus 来源/owner/review、hash、文本、页码、doc ID 和文件名；
+正式 sidecar 必须固定历史 `corpus_id=corpus:4ff7ba48fd38`、标准路径和整文件
+SHA-1 `4ff7ba48fd38a4400e581fac32c43c4217de1ece`，并同时绑定当前实算
+SHA-256、来源/owner/review 和 seed/results。SHA-1 仅作历史身份锚点，SHA-256
+承担当前文件完整性校验。该门禁还核对文本、页码、doc ID 和文件名；
 任何 ID-only 的兼容重建都不能替代历史 snapshot。显式 SHA 只用于诊断探针，不能
-替代 reviewed corpus attestation。
+替代 reviewed corpus attestation；内容匹配的诊断探针也只得到
+`DIAGNOSTIC_CONTENT_COMPATIBLE` / `DIAGNOSTIC_ONLY`，不会得到正式 READY。
 
 ## 8.5 健康检查
 

@@ -185,10 +185,18 @@ class RunAnswerEvalTests(unittest.TestCase):
     def test_historical_execution_invokes_formal_stage6_gate(self) -> None:
         ready_report = {
             "status": "READY",
+            "formal_release_ready": True,
+            "diagnostic_only": False,
             "proof_level": "CONTENT_ANCHORED",
             "attestation": {"validated": True},
             "corpus_attestation": {"validated": True},
             "candidate_corpus": {"hash_pinned": True},
+            "historical_release_identity": {
+                "corpus_id": "corpus:4ff7ba48fd38",
+                "expected_legacy_sha1": "4ff7ba48fd38a4400e581fac32c43c4217de1ece",
+                "legacy_sha1_matches": True,
+                "candidate_path_is_canonical": True,
+            },
         }
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -216,10 +224,18 @@ class RunAnswerEvalTests(unittest.TestCase):
     def test_historical_execution_rejects_incomplete_or_unattested_gate_report(self) -> None:
         malformed_ready = {
             "status": "READY",
+            "formal_release_ready": False,
+            "diagnostic_only": False,
             "proof_level": "CONTENT_ANCHORED",
             "attestation": {"validated": True},
             "corpus_attestation": {"validated": False},
             "candidate_corpus": {"hash_pinned": True},
+            "historical_release_identity": {
+                "corpus_id": "corpus:4ff7ba48fd38",
+                "expected_legacy_sha1": "4ff7ba48fd38a4400e581fac32c43c4217de1ece",
+                "legacy_sha1_matches": True,
+                "candidate_path_is_canonical": True,
+            },
         }
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)

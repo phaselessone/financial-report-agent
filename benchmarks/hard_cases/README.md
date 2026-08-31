@@ -15,9 +15,19 @@ The evaluator recomputes two order-independent identities: a canonical cases has
 
 Each evidence record has a `source_id`. It must resolve through the row's `source_provenance`, and that provenance must match the manifest entry's source hash and locator. The manifest declares category and source quotas; validation recomputes counts and any shortfall from the cases rather than trusting a reported coverage object.
 
+Formal publication additionally requires every manifest source to declare a
+relative `path`, an explicit `--reviewed-source-root`, and a human
+`release_attestation` (`status=reviewed`, reviewer, batch, and RFC-3339 timestamp
+with timezone). The validator confines each resolved path beneath that root and
+recomputes the source file SHA-256 before any model is loaded. Absolute paths,
+path traversal, missing files, hash drift, invalid timestamps, and input
+manifests that self-report `source_verification` all fail closed. A legacy
+structural manifest can still be parsed for migration, but it cannot pass the
+reviewed publication gate.
+
 Gold calculation requirements depend on status. `SUCCESS` requires operands and a result; `FAILED`, `INSUFFICIENT`, `AMBIGUOUS` and `SKIPPED` may omit them. Metrics score only applicable gold dimensions. Process metrics use only the run's own trace/prediction data, while reviewed gold metrics are emitted separately. Every rate reports `numerator`, `denominator`, `micro` and `macro`.
 
-`performance_claim_allowed` is true only when all of the following hold: the reviewed manifest validates; a positive release target is explicitly supplied and met; all ten categories have positive declared quotas and meet them; every manifest source has a positive quota and meets it; every case has a prediction; and the reviewed Claim Verification Accuracy and Calculation Record Accuracy both have non-zero gold denominators. Otherwise the result remains `COVERAGE_ONLY` and `publish_gate.blocking_reasons` records why. Unexpected calculation predictions count as false in every reviewed calculation dimension. Synthetic input is always `SYNTHETIC_CONTRACT_ONLY`.
+`performance_claim_allowed` is true only when all of the following hold: the reviewed manifest validates; source files were recomputed under the confined root; the release attestation validates; a positive release target is explicitly supplied and met; all ten categories have positive declared quotas and meet them; every manifest source has a positive quota and meets it; every case has a prediction; and the reviewed Claim Verification Accuracy and Calculation Record Accuracy both have non-zero gold denominators. Otherwise the result remains `COVERAGE_ONLY` and `publish_gate.blocking_reasons` records why. Unexpected calculation predictions count as false in every reviewed calculation dimension. Synthetic input is always `SYNTHETIC_CONTRACT_ONLY`.
 
 The four executable profile IDs are `baseline-rag`, `agentic-rag`, `structured-agent` and `full-agent`. Runtime treatments come from `src.evaluation.profile_runtime.PROFILE_SPECS`; the compatibility table in the hard-case evaluator is derived from that registry. Atomic claim extraction and deterministic provenance verification are a non-optional graph integrity invariant (`strict_claim_provenance`), including for `structured-agent`; the `claim_verification` treatment controls enhanced verification and recovery only.
 
@@ -27,6 +37,7 @@ The four executable profile IDs are `baseline-rag`, `agentic-rag`, `structured-a
 .\.venv\Scripts\python.exe run_profile_ablation.py `
   --cases-path <reviewed_cases.jsonl> `
   --reviewed-manifest-path <reviewed_manifest.json> `
+  --reviewed-source-root <reviewed_source_root> `
   --reviewed-target-count <release_target> `
   --chunks-path <shared_corpus_chunks.jsonl> `
   --facts-path <facts.duckdb> `

@@ -18,8 +18,7 @@
       "const": 1
     },
     "corpus_id": {
-      "type": "string",
-      "minLength": 1
+      "const": "corpus:4ff7ba48fd38"
     },
     "benchmark_profile": {
       "const": "historical-full-raw"
@@ -27,7 +26,7 @@
     "asset": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["path", "sha256", "format", "chunk_count"],
+      "required": ["path", "legacy_sha1", "sha256", "format", "chunk_count"],
       "properties": {
         "path": {
           "const": "tmp_stage6_data/chunks/chunks.jsonl"
@@ -35,6 +34,9 @@
         "sha256": {
           "type": "string",
           "pattern": "^[0-9a-f]{64}$"
+        },
+        "legacy_sha1": {
+          "const": "4ff7ba48fd38a4400e581fac32c43c4217de1ece"
         },
         "format": {
           "const": "chunks-jsonl"
@@ -60,7 +62,7 @@
         },
         "acquired_at": {
           "type": "string",
-          "minLength": 1
+          "format": "date-time"
         },
         "source_ref": {
           "type": "string",
@@ -86,7 +88,7 @@
         },
         "reviewed_at": {
           "type": "string",
-          "minLength": 1
+          "format": "date-time"
         }
       }
     },

@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "reviewed-semantic-label-v1.schema.json",
+  "title": "Reviewed semantic calibration label",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sample_id",
+    "claim_id",
+    "evidence_id",
+    "score",
+    "label",
+    "source_ref",
+    "review_status",
+    "reviewer_id",
+    "reviewed_at",
+    "scorer_kind",
+    "scorer_model",
+    "scorer_revision",
+    "scorer_config_sha256"
+  ],
+  "properties": {
+    "sample_id": {"type": "string", "minLength": 1},
+    "claim_id": {"type": "string", "minLength": 1},
+    "evidence_id": {"type": "string", "minLength": 1},
+    "claim_text": {"type": "string", "minLength": 1},
+    "evidence_text": {"type": "string", "minLength": 1},
+    "claim_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "evidence_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "score": {"type": "number", "minimum": 0, "maximum": 1},
+    "label": {"enum": ["ENTAILED", "CONTRADICTED", "INSUFFICIENT"]},
+    "source_ref": {"type": "string", "minLength": 1},
+    "review_status": {"const": "reviewed"},
+    "reviewer_id": {"type": "string", "minLength": 1},
+    "reviewed_at": {"type": "string", "format": "date-time"},
+    "scorer_kind": {"const": "directional_nli"},
+    "scorer_model": {"type": "string", "minLength": 1},
+    "scorer_revision": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!refs/heads/)(?!heads/).+$",
+      "not": {
+        "enum": [
+          "current",
+          "default",
+          "dev",
+          "development",
+          "head",
+          "latest",
+          "main",
+          "master",
+          "release",
+          "stable",
+          "unversioned"
+        ]
+      }
+    },
+    "scorer_config_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    }
+  },
+  "allOf": [
+    {
+      "anyOf": [
+        {"required": ["claim_text"]},
+        {"required": ["claim_sha256"]}
+      ]
+    },
+    {
+      "anyOf": [
+        {"required": ["evidence_text"]},
+        {"required": ["evidence_sha256"]}
+      ]
+    }
+  ]
+}

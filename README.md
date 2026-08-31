@@ -223,8 +223,14 @@ content-level gate:
 
 The required shape is documented by
 `benchmarks/full/historical-stage6-corpus.attestation.schema.json`. The sidecar
-binds corpus path/hash/count, source owner/reference/acquisition time, positive
-review identity, and the exact seed/results hashes. The gate then requires exact
+must identify the historical release as `corpus:4ff7ba48fd38`, bind the canonical
+path to legacy whole-file SHA-1
+`4ff7ba48fd38a4400e581fac32c43c4217de1ece` and a freshly computed SHA-256,
+and record count, source owner/reference/acquisition time, positive review
+identity, and the exact seed/results hashes. The legacy SHA-1 is an identity
+anchor recovered from the historical run metadata, not a security signature.
+The gate rejects alternate paths, mutable identities, invalid review timestamps,
+and unknown sidecar fields before it can report formal readiness. It then requires exact
 gold IDs and checks
 document, page, filename, and normalized historical snippet content. Historical
 results expose text anchors for 42 of the 54 unique gold chunks; the remaining
@@ -235,7 +241,8 @@ not acceptable: chunk ordinals can stay stable while their text shifts. Missing,
 unattested, unpinned, or content-incompatible Stage 6 data returns
 `BLOCKED`/exit code 2. `STAGE6_CHUNKS_SHA256` or
 `--expected-chunks-sha256` may pin an audit-only probe, but cannot make the formal
-gate READY without the reviewed sidecar.
+gate READY without the reviewed sidecar. A content-compatible probe is reported
+as `DIAGNOSTIC_CONTENT_COMPATIBLE` / `DIAGNOSTIC_ONLY` and still exits with code 2.
 
 `run_answer_eval.py` now invokes this formal gate automatically for
 `historical-full-core` and `historical-full-raw` before it reserves a run
@@ -253,7 +260,10 @@ reviewed full seed, historical results, their attestation, or reviewed semantic 
 or invalid. `SEMANTIC_LABELS_SHA256` remains mandatory; labels must cover at
 least 20 reviewed examples with both entailed and non-entailed classes, bind a
 single directional-NLI scorer identity, and pass the precision-first calibration
-constraint. It never substitutes the 48-row current seed or treats an observed
+constraint with at least five predicted positives and five true positives.
+Every reviewed row must bind both claim and evidence content through inline text
+or SHA-256, use a timezone-bearing review timestamp, and reject moving scorer
+revisions such as `main`, `master`, `latest`, or `refs/heads/*`. It never substitutes the 48-row current seed or treats an observed
 hash as a trusted expected hash; full-asset hashes come from the reviewed sidecar.
 
 When readiness is `READY`, a reviewed four-profile run may enable the calibrated
@@ -333,7 +343,7 @@ category activates its named treatment: the current `derived_calculation` and
 Treatment activation is covered separately by `tests/test_profile_runtime.py`;
 reviewed quality conclusions still require reviewed cases and gold labels.
 
-A formal reviewed run uses `run_profile_ablation.py --cases-path <reviewed_cases.jsonl> --reviewed-manifest-path <reviewed_manifest.json> --reviewed-target-count <release_target> --chunks-path <shared_corpus_chunks.jsonl> --facts-path <facts.duckdb> --company-aliases-path <company_aliases.json> --llm-provider deepseek --llm-model <model> --llm-model-revision <pinned-revision> --output-root outputs/profile_ablation`. Add all four semantic inputs above only after their reviewed readiness gate is `READY`. All four profiles retrieve from that same shared corpus; reviewed gold evidence is evaluator-only and is never injected into search. The manifest hashes, provenance and quotas are recomputed; an omitted target, category/source shortfall, missing prediction, or zero reviewed claim/calculation gold denominator keeps the result `COVERAGE_ONLY`. Synthetic execution requires explicit `--allow-synthetic-contract --cases-path benchmarks/hard_cases/cases.jsonl` and remains `SYNTHETIC_CONTRACT_ONLY`; using benchmark evidence as a contract oracle additionally requires `--contract-oracle` and is permanently non-publishable.
+A formal reviewed run uses `run_profile_ablation.py --cases-path <reviewed_cases.jsonl> --reviewed-manifest-path <reviewed_manifest.json> --reviewed-source-root <reviewed_source_root> --reviewed-target-count <release_target> --chunks-path <shared_corpus_chunks.jsonl> --facts-path <facts.duckdb> --company-aliases-path <company_aliases.json> --llm-provider deepseek --llm-model <model> --llm-model-revision <pinned-revision> --output-root outputs/profile_ablation`. Add all four semantic inputs above only after their reviewed readiness gate is `READY`. All four profiles retrieve from that same shared corpus; reviewed gold evidence is evaluator-only and is never injected into search. Before model loading, every manifest source path is confined under the explicit root and its file SHA-256 is recomputed; the formal manifest also requires a timezone-bearing human release attestation. Self-reported source-verification state is rejected. The manifest hashes, provenance and quotas are recomputed; an omitted target, category/source shortfall, missing prediction, source/release verification failure, or zero reviewed claim/calculation gold denominator keeps the result `COVERAGE_ONLY`. Synthetic execution requires explicit `--allow-synthetic-contract --cases-path benchmarks/hard_cases/cases.jsonl` and remains `SYNTHETIC_CONTRACT_ONLY`; using benchmark evidence as a contract oracle additionally requires `--contract-oracle` and is permanently non-publishable.
 
 Every graph-backed profile, including `structured-agent`, always performs atomic claim extraction and deterministic provenance verification before publishing a non-abstained answer. This is the `strict_claim_provenance` integrity invariant, not an ablation treatment. The `claim_verification` treatment controls enhanced verification, optional calibrated semantic/LLM judging, and verification-driven recovery; disabling it cannot bypass the deterministic claim gate. Each graph profile writes one complete trajectory row per case and must persist a bundle-bound `READY` evidence-integrity verdict before comparison.
 

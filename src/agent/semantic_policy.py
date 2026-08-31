@@ -9,8 +9,43 @@ import re
 from typing import Any
 
 
+_MUTABLE_REVISIONS = frozenset(
+    {
+        "current",
+        "default",
+        "dev",
+        "development",
+        "head",
+        "latest",
+        "main",
+        "master",
+        "release",
+        "stable",
+        "unversioned",
+    }
+)
+
+
 class SemanticActivationError(ValueError):
     """Raised when a scorer lacks an auditable reviewed calibration contract."""
+
+
+def _immutable_revision(value: str) -> bool:
+    normalized = value.strip().casefold()
+    return bool(
+        normalized
+        and normalized not in _MUTABLE_REVISIONS
+        and not normalized.startswith("refs/heads/")
+        and not normalized.startswith("heads/")
+    )
+
+
+def _non_negative_count(value: Any, *, field_name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise SemanticActivationError(
+            f"semantic calibration {field_name} must be a non-negative integer"
+        )
+    return value
 
 
 @dataclass(frozen=True)
@@ -58,10 +93,18 @@ def activate_semantic_scorer(
         raise SemanticActivationError("semantic calibration is not complete")
     if calibration_report.get("precision_constraint_satisfied") is not True:
         raise SemanticActivationError("semantic precision constraint is not satisfied")
+    if calibration_report.get("positive_support_constraint_satisfied") is not True:
+        raise SemanticActivationError(
+            "semantic predicted-positive/true-positive support constraint is not satisfied"
+        )
     if calibration_report.get("coverage_constraint_satisfied") is not True:
         raise SemanticActivationError("semantic label coverage constraint is not satisfied")
     contract = calibration_report.get("label_contract")
-    if not isinstance(contract, Mapping) or contract.get("review_status") != "reviewed":
+    if (
+        not isinstance(contract, Mapping)
+        or contract.get("review_status") != "reviewed"
+        or contract.get("content_hash_binding") != "sha256"
+    ):
         raise SemanticActivationError("semantic labels are not reviewed")
     scorer_kind = str(calibration_report.get("scorer_kind") or "").strip()
     if scorer_kind != "directional_nli":
@@ -70,33 +113,69 @@ def activate_semantic_scorer(
     if not isinstance(calibrated_identity, Mapping) or not isinstance(scorer_identity, Mapping):
         raise SemanticActivationError("semantic scorer identity is missing")
     identity_fields = ("kind", "model", "revision", "config_sha256")
-    expected_identity = {field: str(calibrated_identity.get(field) or "").strip() for field in identity_fields}
-    runtime_identity = {field: str(scorer_identity.get(field) or "").strip() for field in identity_fields}
+    expected_identity = {
+        field: str(calibrated_identity.get(field) or "").strip() for field in identity_fields
+    }
+    runtime_identity = {
+        field: str(scorer_identity.get(field) or "").strip() for field in identity_fields
+    }
     if any(not value for value in expected_identity.values()):
         raise SemanticActivationError("calibrated semantic scorer identity is incomplete")
+    if not _immutable_revision(expected_identity["revision"]):
+        raise SemanticActivationError("calibrated semantic scorer revision is not immutable")
     if not re.fullmatch(r"[0-9a-fA-F]{64}", expected_identity["config_sha256"]):
         raise SemanticActivationError("calibrated semantic scorer config hash is invalid")
     if expected_identity != runtime_identity or expected_identity["kind"] != scorer_kind:
         raise SemanticActivationError("runtime semantic scorer identity does not match calibration")
-    labels_sha256 = str(
-        calibration_report.get("labels_sha256")
-        or calibration_report.get("dataset_sha256")
-        or ""
-    ).strip().lower()
+    labels_sha256 = (
+        str(
+            calibration_report.get("labels_sha256")
+            or calibration_report.get("dataset_sha256")
+            or ""
+        )
+        .strip()
+        .lower()
+    )
     if not re.fullmatch(r"[0-9a-f]{64}", labels_sha256):
         raise SemanticActivationError("reviewed semantic label hash is missing or invalid")
+    metrics = calibration_report.get("metrics")
+    config = calibration_report.get("calibration_config")
+    if not isinstance(metrics, Mapping) or not isinstance(config, Mapping):
+        raise SemanticActivationError("calibration threshold/precision is malformed")
     try:
         threshold = float(calibration_report.get("threshold"))
-        metrics = calibration_report.get("metrics")
-        precision = float(metrics.get("precision")) if isinstance(metrics, Mapping) else math.nan
-        config = calibration_report.get("calibration_config")
-        minimum = float(config.get("min_precision")) if isinstance(config, Mapping) else math.nan
+        precision = float(metrics.get("precision"))
+        minimum = float(config.get("min_precision"))
     except (TypeError, ValueError) as exc:
         raise SemanticActivationError("calibration threshold/precision is malformed") from exc
     if not math.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
         raise SemanticActivationError("calibration threshold is outside [0, 1]")
     if not math.isfinite(precision) or not math.isfinite(minimum) or precision < minimum:
         raise SemanticActivationError("reported semantic precision is below the required minimum")
+    true_positives = _non_negative_count(metrics.get("tp"), field_name="metrics.tp")
+    false_positives = _non_negative_count(metrics.get("fp"), field_name="metrics.fp")
+    minimum_predicted = _non_negative_count(
+        config.get("min_predicted_positives"),
+        field_name="calibration_config.min_predicted_positives",
+    )
+    minimum_true = _non_negative_count(
+        config.get("min_true_positives"),
+        field_name="calibration_config.min_true_positives",
+    )
+    predicted_positives = true_positives + false_positives
+    derived_precision = true_positives / predicted_positives if predicted_positives else 0.0
+    if not math.isclose(precision, derived_precision, rel_tol=0.0, abs_tol=1e-12):
+        raise SemanticActivationError("reported semantic precision does not match TP/FP counts")
+    if predicted_positives < minimum_predicted or true_positives < minimum_true:
+        raise SemanticActivationError(
+            "reported semantic calibration lacks predicted-positive/true-positive support"
+        )
+    statuses = calibration_report.get("calibrated_statuses")
+    if (
+        statuses != ["ENTAILED"]
+        or calibration_report.get("contradiction_state_change_allowed") is not False
+    ):
+        raise SemanticActivationError("semantic calibrated status contract is not fail-closed")
     return CalibratedSemanticScorer(
         threshold=threshold,
         labels_sha256=labels_sha256,

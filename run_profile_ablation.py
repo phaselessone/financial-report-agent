@@ -93,6 +93,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Manifest required whenever --cases-path contains reviewed cases.",
     )
     parser.add_argument(
+        "--reviewed-source-root",
+        type=Path,
+        default=None,
+        help=(
+            "Root containing every manifest source_provenance path. Reviewed runs recompute "
+            "each source file SHA-256 under this confined root before model loading."
+        ),
+    )
+    parser.add_argument(
         "--allow-synthetic-contract",
         action="store_true",
         help="Explicitly permit the synthetic contract fixture; its outputs never support performance claims.",
@@ -370,7 +379,15 @@ def _load_benchmark(args: argparse.Namespace) -> tuple[list[dict[str, Any]], dic
     manifest_path = args.reviewed_manifest_path.resolve()
     if not manifest_path.is_file():
         raise FileNotFoundError(f"reviewed benchmark manifest not found: {manifest_path}")
-    return load_reviewed_cases(cases_path, manifest_path)
+    if args.reviewed_source_root is None:
+        raise ValueError("reviewed benchmark runs require --reviewed-source-root")
+    return load_reviewed_cases(
+        cases_path,
+        manifest_path,
+        source_root=args.reviewed_source_root.resolve(),
+        verify_source_files=True,
+        require_release_attestation=True,
+    )
 
 
 def _corpus_hash(
