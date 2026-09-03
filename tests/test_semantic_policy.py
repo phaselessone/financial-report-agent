@@ -8,6 +8,8 @@ from src.agent.semantic_policy import (
     activate_semantic_scorer,
 )
 
+FULL_COMMIT_SHA = "a" * 40
+
 
 def _safe_report(**overrides):
     report = {
@@ -31,7 +33,7 @@ def _safe_report(**overrides):
         "scorer_identity": {
             "kind": "directional_nli",
             "model": "fixture-nli",
-            "revision": "fixture-v1",
+            "revision": FULL_COMMIT_SHA,
             "config_sha256": "b" * 64,
         },
         "calibrated_statuses": ["ENTAILED"],
@@ -89,6 +91,37 @@ def test_reviewed_precision_first_directional_scorer_can_be_activated() -> None:
     assert calls == [("claim", "evidence")]
 
 
+@pytest.mark.parametrize("revision", ["feature-v1", "A" * 40])
+def test_semantic_scorer_activation_requires_full_commit_revision(revision: str) -> None:
+    report = _safe_report()
+    report["scorer_identity"] = {
+        **report["scorer_identity"],
+        "revision": revision,
+    }
+
+    with pytest.raises(SemanticActivationError, match="full Git commit SHA"):
+        activate_semantic_scorer(
+            lambda _claim, _evidence: {},
+            report,
+            scorer_identity=report["scorer_identity"],
+        )
+
+
+def test_semantic_scorer_activation_requires_hub_repo_id() -> None:
+    report = _safe_report()
+    report["scorer_identity"] = {
+        **report["scorer_identity"],
+        "model": "./fixture-nli",
+    }
+
+    with pytest.raises(SemanticActivationError, match="Hub repo ID"):
+        activate_semantic_scorer(
+            lambda _claim, _evidence: {},
+            report,
+            scorer_identity=report["scorer_identity"],
+        )
+
+
 def test_entailment_only_calibration_cannot_activate_semantic_contradiction() -> None:
     activated = activate_semantic_scorer(
         lambda _claim, _evidence: {"status": "CONTRADICTED", "score": 0.99},
@@ -111,7 +144,7 @@ def test_semantic_scorer_activation_rejects_runtime_identity_mismatch() -> None:
             scorer_identity={
                 "kind": "directional_nli",
                 "model": "different-model",
-                "revision": "fixture-v1",
+                "revision": FULL_COMMIT_SHA,
                 "config_sha256": "b" * 64,
             },
         )

@@ -16,6 +16,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from src.utils.model_revision import is_full_git_commit_revision, is_hf_hub_repo_id
+
 
 DEFAULT_SEMANTIC_THRESHOLD = 0.85
 DEFAULT_SEMANTIC_THRESHOLDS = tuple(round(index / 100, 2) for index in range(50, 100, 5))
@@ -45,21 +47,6 @@ SEMANTIC_LABELS = frozenset({"ENTAILED", "CONTRADICTED", "INSUFFICIENT"})
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 ISO_DATETIME_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$"
-)
-MUTABLE_SCORER_REVISIONS = frozenset(
-    {
-        "current",
-        "default",
-        "dev",
-        "development",
-        "head",
-        "latest",
-        "main",
-        "master",
-        "release",
-        "stable",
-        "unversioned",
-    }
 )
 
 
@@ -126,16 +113,6 @@ def _validate_reviewed_at(value: str, *, prefix: str, errors: list[str]) -> None
         return
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         errors.append(f"{prefix}: reviewed_at must include a timezone")
-
-
-def _is_immutable_revision(value: str) -> bool:
-    normalized = value.strip().casefold()
-    return bool(
-        normalized
-        and normalized not in MUTABLE_SCORER_REVISIONS
-        and not normalized.startswith("refs/heads/")
-        and not normalized.startswith("heads/")
-    )
 
 
 def _content_sha256(
@@ -231,10 +208,12 @@ def validate_semantic_labels(samples: Iterable[Mapping[str, Any]]) -> list[dict[
         _validate_reviewed_at(reviewed_at, prefix=prefix, errors=errors)
         if scorer_kind != "directional_nli":
             errors.append(f"{prefix}: scorer_kind must equal 'directional_nli'")
-        if not scorer_model:
-            errors.append(f"{prefix}: scorer_model must be non-empty")
-        if not _is_immutable_revision(scorer_revision):
-            errors.append(f"{prefix}: scorer_revision must identify an immutable revision")
+        if not is_hf_hub_repo_id(scorer_model):
+            errors.append(
+                f"{prefix}: scorer_model must be a Hugging Face Hub repo ID, not a local path"
+            )
+        if not is_full_git_commit_revision(scorer_revision):
+            errors.append(f"{prefix}: scorer_revision must be a full 40-character Git commit SHA")
         if not SHA256_RE.fullmatch(scorer_config_sha256):
             errors.append(f"{prefix}: scorer_config_sha256 must be a SHA-256 hex digest")
         scorer_identities.add((scorer_kind, scorer_model, scorer_revision, scorer_config_sha256))

@@ -407,7 +407,7 @@ def _write_labels(path: Path, *, valid: bool = True, single_class: bool = False)
                 "reviewed_at": "2026-08-24T00:00:00Z",
                 "scorer_kind": "directional_nli",
                 "scorer_model": "fixture-nli",
-                "scorer_revision": "fixture-v1",
+                "scorer_revision": "a" * 40,
                 "scorer_config_sha256": "b" * 64,
             }
         )

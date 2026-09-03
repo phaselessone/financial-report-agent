@@ -40,26 +40,17 @@
     "reviewer_id": {"type": "string", "minLength": 1},
     "reviewed_at": {"type": "string", "format": "date-time"},
     "scorer_kind": {"const": "directional_nli"},
-    "scorer_model": {"type": "string", "minLength": 1},
+    "scorer_model": {
+      "type": "string",
+      "description": "Hugging Face Hub repo ID used by the reviewed scorer.",
+      "minLength": 1,
+      "maxLength": 96,
+      "pattern": "^(?=.{1,96}$)(?!.*(?:--|\\.\\.))(?!.*\\.git$)(?:[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_])?/)?[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_])?$"
+    },
     "scorer_revision": {
       "type": "string",
-      "minLength": 1,
-      "pattern": "^(?!refs/heads/)(?!heads/).+$",
-      "not": {
-        "enum": [
-          "current",
-          "default",
-          "dev",
-          "development",
-          "head",
-          "latest",
-          "main",
-          "master",
-          "release",
-          "stable",
-          "unversioned"
-        ]
-      }
+      "description": "Full Git commit SHA for the scorer used to produce this row.",
+      "pattern": "^[0-9a-f]{40}$"
     },
     "scorer_config_sha256": {
       "type": "string",

@@ -1,6 +1,7 @@
 import hashlib
 import json
 import math
+import re
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,8 @@ from src.evaluation.semantic_calibration import (
     threshold_metrics,
     validate_semantic_labels,
 )
+
+FULL_COMMIT_SHA = "a" * 40
 
 
 def test_threshold_metrics_and_calibration():
@@ -54,7 +57,7 @@ def _reviewed(sample_id: str = "s1", **overrides):
         "reviewed_at": "2026-08-24T00:00:00Z",
         "scorer_kind": "directional_nli",
         "scorer_model": "fixture-nli",
-        "scorer_revision": "fixture-v1",
+        "scorer_revision": FULL_COMMIT_SHA,
         "scorer_config_sha256": "b" * 64,
     }
     row.update(overrides)
@@ -104,8 +107,12 @@ def test_reviewed_label_contract_accepts_three_state_rows():
         ({"synthetic": True}, "synthetic"),
         ({"reviewed_at": "2026-08-24"}, "ISO-8601"),
         ({"reviewed_at": "2026-08-24T00:00:00"}, "timezone"),
-        ({"scorer_revision": "main"}, "immutable"),
-        ({"scorer_revision": "refs/heads/master"}, "immutable"),
+        ({"scorer_revision": "main"}, "Git commit SHA"),
+        ({"scorer_revision": "refs/heads/master"}, "Git commit SHA"),
+        ({"scorer_revision": "feature-v1"}, "Git commit SHA"),
+        ({"scorer_revision": FULL_COMMIT_SHA[:12]}, "Git commit SHA"),
+        ({"scorer_revision": FULL_COMMIT_SHA.upper()}, "Git commit SHA"),
+        ({"scorer_model": "./fixture-nli"}, "Hub repo ID"),
         ({"claim_sha256": None}, "claim_text or claim_sha256"),
         ({"evidence_sha256": None}, "evidence_text or evidence_sha256"),
     ],
@@ -204,7 +211,7 @@ def test_calibration_report_records_label_provenance(tmp_path):
     assert report["scorer_identity"] == {
         "kind": "directional_nli",
         "model": "fixture-nli",
-        "revision": "fixture-v1",
+        "revision": FULL_COMMIT_SHA,
         "config_sha256": "b" * 64,
     }
     assert report["calibrated_statuses"] == ["ENTAILED"]
@@ -298,4 +305,8 @@ def test_reviewed_semantic_label_schema_records_fail_closed_contract() -> None:
 
     assert schema["properties"]["reviewed_at"]["format"] == "date-time"
     assert "scorer_revision" in schema["required"]
+    assert schema["properties"]["scorer_revision"]["pattern"] == "^[0-9a-f]{40}$"
+    scorer_model_pattern = schema["properties"]["scorer_model"]["pattern"]
+    assert re.fullmatch(scorer_model_pattern, "org/fixture-nli")
+    assert re.fullmatch(scorer_model_pattern, "./fixture-nli") is None
     assert len(schema["allOf"]) == 2

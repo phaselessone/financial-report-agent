@@ -1,13 +1,13 @@
 # Financial Report Agent 计划执行与最终验收矩阵
 
-日期：2026-08-31
+日期：2026-09-03
 
 ## 1. 最终结论与状态口径
 
-截至 2026-08-31，代码实现、严格产物合同与本轮资产门禁加固已通过本地完整 suite
+截至 2026-09-03，代码实现、严格产物合同与本轮资产门禁加固已通过本地完整 suite
 和 CI 等价命令。上一冻结基线 `446a316` 的 hosted deterministic-ci run
 [`33260006502`](https://github.com/phaselessone/financial-report-agent/actions/runs/33260006502)
-已在 Ubuntu 与 Windows 通过；本轮 2026-08-31 hardening 在本快照中尚待提交并触发
+已在 Ubuntu 与 Windows 通过；本轮 2026-09-03 hardening 在本快照中尚待提交并触发
 新的 hosted run，因此不能用旧 run 冒充新代码的 hosted 证据。reviewed
 hard-case/semantic/Stage 6 资产仍缺失，
 因此项目不能标记为全局 COMPLETE，也不能发布 reviewed benchmark 性能结论。为避免把不同层次的“完成”
@@ -53,19 +53,21 @@ hard-case/semantic/Stage 6 资产仍缺失，
 21. historical Stage 6 sidecar 必须固定为历史 `corpus:4ff7ba48fd38`、标准仓库路径和整文件 SHA-1 `4ff7ba48fd38a4400e581fac32c43c4217de1ece`，再叠加实算 SHA-256；任意自选 corpus ID、alternate path、自洽但非历史的 hash 或未知字段均 fail closed。
 22. 显式 Stage 6 SHA 探针只允许产生 `DIAGNOSTIC_CONTENT_COMPATIBLE` / `DIAGNOSTIC_ONLY`，不能提升为正式 READY；正式路径在 legacy identity 漂移时先于 63 MB 级 JSONL 内容解析失败。
 23. reviewed hard-case 的每个 source path 必须被限制在显式 source root 下并现场重算文件 SHA-256；正式运行还需带时区的 release attestation，自报 `source_verification`、路径逃逸、缺文件或漂移都不能取得发布权限。
-24. reviewed semantic row 必须绑定 claim/evidence 正文或 SHA-256、拒绝 ID 内容漂移和 moving scorer revision；precision-first 阈值除 precision/coverage 外，至少需要 5 个 predicted positives 与 5 个 true positives。
+24. reviewed semantic row 必须绑定 claim/evidence 正文或 SHA-256、拒绝 ID 内容漂移；scorer model 必须是 Hugging Face Hub repo ID，revision 必须为小写完整 40 位 Git commit SHA，实际离线加载的 tokenizer/model commit metadata 也必须精确匹配；precision-first 阈值除 precision/coverage 外，至少需要 5 个 predicted positives 与 5 个 true positives。
+25. `Unnecessary Tool Call Rate` 必须以实际调用事件为分母、非 required tool 的调用事件为分子；空 `required_tools` 时任何调用均为 unnecessary，全局主值使用 call-level micro，同时保留 per-case macro。
+26. 每个统一 node trajectory event 必须带 `step/node/action/input_summary/output_summary/status/latency_ms/tokens/error_type`；输入输出摘要只记录状态形状、集合规模与计数，不复制 query、claim 或 answer 正文。
 
 ## 3. Phase 完成矩阵
 
 | Phase | 本地实现状态 | 已落地证据 | 外部剩余条件 / 发布限制 |
 |---|---|---|---|
-| A RunIdentity / strict trace | `COMPLETE_LOCAL` | 15 字段 `RunIdentity`；五文件 EvalBundle；staged validation + atomic replace；比较前身份校验；失败行严格 schema；current-dev real-corpus bundle 为 READY | 无本地代码缺口 |
+| A RunIdentity / strict trace | `COMPLETE_LOCAL` | 15 字段 `RunIdentity`；五文件 EvalBundle；staged validation + atomic replace；比较前身份校验；失败行严格 schema；统一 node event 含 M8 的 step/input/output/tokens 合同且摘要不复制正文；current-dev real-corpus bundle 为 READY | 无本地代码缺口 |
 | B 统一 Reasoning Plan | `COMPLETE_LOCAL` | 单跳、多跳、LOOKUP/SEARCH/CALCULATE/COMPARE 共用 build→plan→execute→observe→coverage→synthesize→claims→verify→finalize；malformed decomposition fail closed | 无本地代码缺口 |
 | C Calculation + Claim | `COMPLETE_LOCAL` | evidence-pool operand reuse；单证据多值拒绝静默选首值；Decimal 计算；显式 calculation lineage；atomic ClaimRecord；parent DAG；DERIVED 重算并绑定 `CalculationRecord`；planned comparison synthesis 强制校验 step/result/parent/calculation lineage；canonical abstain；ENTAILED-only finalize | 无本地代码缺口 |
 | D Structured Fact v2 | `COMPLETE_LOCAL` | 显式 `MetricSpec`；ACTUAL/ADJUSTED/FORECAST 严格区分；scope/date/revision/basis；Q2 单季与累计口径不再自动混同；DuckDB filter pushdown；legacy JSONL 与 read-only DuckDB 加载 | 无本地代码缺口 |
-| E 四 profile / reviewed metrics | 框架 `COMPLETE_LOCAL`；当前 run 为 `SYNTHETIC_CONTRACT_ONLY` | 四个 canonical profile；共享 comparison identity；完整 per-case trajectory；同参 report-search 跨计划去重；case 级 executor failure；gold/process/contract 指标分层；reviewed claim/calculation 非零分母发布门禁；source-root 文件 SHA 重算 + release attestation；extra calculation 七维惩罚；evidence mismatch 归因；`EXPECTED_ABSTENTION` 与 observed process failure 分离 | 缺正式 reviewed cases/manifest、可核验 source files 与 release attestation；当前 run `performance_claim_allowed=false`，不得发布排名或质量提升 |
-| F semantic / 历史资产 | 代码 `COMPLETE_LOCAL`；资产 `BLOCKED_EXTERNAL_ASSETS` | reviewed label schema + claim/evidence 内容哈希；precision-first calibration + 最小 predicted-positive/TP；local-only directional-NLI scorer；moving revision 拒绝；READY readiness + actual labels/hash + calibration + scorer identity 四方绑定；deterministic→NLI→bounded LLM judge；full seed/results 已通过 attestation；historical runtime 前置 Stage 6 门禁；Stage 6 固定 historical corpus ID/path/SHA-1 + current SHA-256 并隔离 diagnostic status | 缺 reviewed semantic labels 及可信 SHA；缺历史 SHA-1 精确匹配、内容兼容的 Stage 6 corpus 与 reviewed attestation；正式 semantic activation 未运行 |
-| G CI / docs / observability | 当前 hardening `COMPLETE_LOCAL / PENDING_HOSTED`；上一基线 `HOSTED_GREEN` | `requirements.lock`；固定 `ruff==0.12.12`；11 个 Phase G/CI/评测核心文件的增量 lint + format-check；Ubuntu/Windows CPU-only workflow；provider-free 四 profile step；持久化 verdict；strict HTML；本轮本地 1055 tests、Phase 0 211 tests 与 CI 等价门禁已通过 | 上一基线 run `33260006502`：Ubuntu 2m01s、Windows 3m32s，两个矩阵作业成功；本轮提交后必须等待新的双平台 run 才能恢复当前 HEAD 的 `HOSTED_GREEN` |
+| E 四 profile / reviewed metrics | 框架 `COMPLETE_LOCAL`；当前 run 为 `SYNTHETIC_CONTRACT_ONLY` | 四个 canonical profile；共享 comparison identity；完整 per-case trajectory；同参 report-search 跨计划去重；case 级 executor failure；gold/process/contract 指标分层；Unnecessary Tool Call Rate 使用 call-event micro + per-case macro；reviewed claim/calculation 非零分母发布门禁；source-root 文件 SHA 重算 + release attestation；extra calculation 七维惩罚；evidence mismatch 归因；`EXPECTED_ABSTENTION` 与 observed process failure 分离 | 缺正式 reviewed cases/manifest、可核验 source files 与 release attestation；当前 run `performance_claim_allowed=false`，不得发布排名或质量提升 |
+| F semantic / 历史资产 | 代码 `COMPLETE_LOCAL`；资产 `BLOCKED_EXTERNAL_ASSETS` | reviewed label schema + claim/evidence 内容哈希；precision-first calibration + 最小 predicted-positive/TP；Hub repo ID-only、local-files-only directional-NLI scorer；小写完整 commit SHA + tokenizer/model 实载 commit metadata 精确绑定；READY readiness + actual labels/hash + calibration + scorer identity 四方绑定；deterministic→NLI→bounded LLM judge；full seed/results 已通过 attestation；historical runtime 前置 Stage 6 门禁；Stage 6 固定 historical corpus ID/path/SHA-1 + current SHA-256 并隔离 diagnostic status | 缺 reviewed semantic labels 及可信 SHA；缺授权且本地缓存完整的 directional-NLI Hub snapshot/config；缺历史 SHA-1 精确匹配、内容兼容的 Stage 6 corpus 与 reviewed attestation；正式 semantic activation 未运行 |
+| G CI / docs / observability | 当前 hardening `COMPLETE_LOCAL / PENDING_HOSTED`；上一基线 `HOSTED_GREEN` | `requirements.lock`；固定 `ruff==0.12.12`；11 个 Phase G/CI/评测核心文件的增量 lint + format-check；Ubuntu/Windows CPU-only workflow；provider-free 四 profile step；持久化 verdict；strict HTML；本轮本地 1084 tests、Phase 0 215 tests 与 CI 等价门禁已通过 | 上一基线 run `33260006502`：Ubuntu 2m01s、Windows 3m32s，两个矩阵作业成功；本轮提交后必须等待新的双平台 run 才能恢复当前 HEAD 的 `HOSTED_GREEN` |
 | H M10 OCR/Table | `KEEP_M10_P2` | 3359 页、23942 chunks、194 documents 的 corpus quality gate 仍支持延期 | 只有人工复核证明 OCR/Table 是主要失败来源后才另开计划 |
 
 ### 3.1 详细计划的最终 COMPLETE 条件审计
@@ -91,8 +93,8 @@ hard-case/semantic/Stage 6 资产仍缺失，
 ### 4.1 全仓测试与静态门禁
 
 - 当前待提交分支：`codex/financial-agent-strict-plan`。本轮提交仍明确排除带人类签署身份且发布授权未单独确认的 untracked `historical-full-raw.attestation.json`。
-- 当前工作区完整 suite：`1055 passed, 1 skipped`（29.56s）。唯一 skip 是缺失真实 Stage 6 snapshot 时必须保留的 private restore gate，不能用兼容重建或 synthetic corpus 消除。
-- Phase 0 deterministic smoke：`211 passed`。strict observability：`READY`；balanced hard-case subset：PASS；four-profile contract：`SYNTHETIC_CONTRACT_ONLY`。
+- 当前工作区完整 suite：`1084 passed, 1 skipped`（29.72s）。唯一 skip 是缺失真实 Stage 6 snapshot 时必须保留的 private restore gate，不能用兼容重建或 synthetic corpus 消除。
+- Phase 0 deterministic smoke：`215 passed`。strict observability：`READY`；balanced hard-case subset：PASS；four-profile contract：`SYNTHETIC_CONTRACT_ONLY`。
 - 上一冻结基线 hosted deterministic-ci：run `33260006502`，head SHA `446a316103d2c252d1582f0c2091ce23e32efe5e`，Ubuntu `success`（2m01s），Windows `success`（3m32s）。该 run 不覆盖本轮尚未推送的 hardening。
 - Balanced hard-case subset：10 cases，10 类各 1 条，subset SHA-256 `5ef1c2dc33de427aeba77a9bf5d564b930dea9e0e5eb07199821f836abfc5dd4`；当前重跑 PASS。
 - `uv --no-cache pip check --python .venv\Scripts\python.exe`：通过，`77 packages compatible`。使用 `--no-cache` 是因当前 sandbox 无权读写用户级 `uv` cache，与依赖一致性无关。

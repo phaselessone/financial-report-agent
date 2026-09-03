@@ -14,9 +14,14 @@ premise and the claim as the hypothesis.
 Each row must follow `reviewed-semantic-label-v1.schema.json`, use an RFC-3339
 review timestamp with timezone, and bind both the claim and evidence via inline
 text or SHA-256. Reused claim/evidence IDs may not drift to different content.
-Moving scorer references (`main`, `master`, `latest`, `refs/heads/*`, and
-similar aliases) are rejected. Calibration requires the existing label/class
-coverage plus at least five predicted positives and five true positives; a
+The scorer model must be a Hugging Face Hub repo ID, never a local directory or
+file path. Its revision must be the canonical lowercase 40-character Git commit
+SHA of the locally cached snapshot; branches, tags, abbreviated SHAs, uppercase
+hashes, and aliases are rejected. After loading, both tokenizer and model commit
+metadata must exactly match that declared revision. Missing or drifting metadata
+fails closed.
+Calibration requires the existing label/class coverage plus at least five
+predicted positives and five true positives; a
 near-empty positive prediction set cannot satisfy the precision-first gate.
 
 `run_profile_ablation.py` accepts the Phase 0 readiness JSON through

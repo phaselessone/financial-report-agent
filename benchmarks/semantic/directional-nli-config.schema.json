@@ -16,26 +16,17 @@
   ],
   "properties": {
     "kind": {"const": "directional_nli"},
-    "model": {"type": "string", "minLength": 1},
+    "model": {
+      "type": "string",
+      "description": "Hugging Face Hub repo ID only; local and relative paths are forbidden.",
+      "minLength": 1,
+      "maxLength": 96,
+      "pattern": "^(?=.{1,96}$)(?!.*(?:--|\\.\\.))(?!.*\\.git$)(?:[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_])?/)?[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_])?$"
+    },
     "revision": {
       "type": "string",
-      "minLength": 1,
-      "pattern": "^(?!refs/heads/)(?!heads/).+$",
-      "not": {
-        "enum": [
-          "current",
-          "default",
-          "dev",
-          "development",
-          "head",
-          "latest",
-          "main",
-          "master",
-          "release",
-          "stable",
-          "unversioned"
-        ]
-      }
+      "description": "Full Git commit SHA for the locally cached model revision.",
+      "pattern": "^[0-9a-f]{40}$"
     },
     "entailment_label_id": {"type": "integer", "minimum": 0},
     "max_length": {"type": "integer", "minimum": 8, "maximum": 4096},

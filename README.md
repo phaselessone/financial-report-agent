@@ -262,9 +262,12 @@ least 20 reviewed examples with both entailed and non-entailed classes, bind a
 single directional-NLI scorer identity, and pass the precision-first calibration
 constraint with at least five predicted positives and five true positives.
 Every reviewed row must bind both claim and evidence content through inline text
-or SHA-256, use a timezone-bearing review timestamp, and reject moving scorer
-revisions such as `main`, `master`, `latest`, or `refs/heads/*`. It never substitutes the 48-row current seed or treats an observed
-hash as a trusted expected hash; full-asset hashes come from the reviewed sidecar.
+or SHA-256, use a timezone-bearing review timestamp, and require the scorer
+revision to be a lowercase full 40-character Git commit SHA. The scorer model
+must be a Hugging Face Hub repo ID, and both loaded tokenizer and model metadata
+must resolve to that exact commit; local model directories are rejected. It
+never substitutes the 48-row current seed or treats an observed hash as a
+trusted expected hash; full-asset hashes come from the reviewed sidecar.
 
 When readiness is `READY`, a reviewed four-profile run may enable the calibrated
 directional-NLI layer only by supplying all four inputs:

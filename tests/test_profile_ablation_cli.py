@@ -378,7 +378,7 @@ def test_semantic_cli_activates_exact_local_scorer_and_binds_hashes(
     scorer_config = {
         "kind": "directional_nli",
         "model": "fixture-nli",
-        "revision": "fixture-v1",
+        "revision": "a" * 40,
         "entailment_label_id": 2,
         "max_length": 256,
         "device": "cpu",
@@ -492,7 +492,7 @@ def test_semantic_cli_rejects_blocked_readiness_before_activation(
     scorer_config = {
         "kind": "directional_nli",
         "model": "fixture-nli",
-        "revision": "fixture-v1",
+        "revision": "a" * 40,
         "entailment_label_id": 2,
         "local_files_only": True,
         "trust_remote_code": False,
@@ -591,7 +591,7 @@ def test_semantic_cli_rejects_calibration_hash_not_matching_actual_labels(
     scorer_config = {
         "kind": "directional_nli",
         "model": "fixture-nli",
-        "revision": "fixture-v1",
+        "revision": "a" * 40,
         "entailment_label_id": 2,
         "local_files_only": True,
         "trust_remote_code": False,

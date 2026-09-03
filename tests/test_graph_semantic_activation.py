@@ -50,7 +50,7 @@ def _scorer_identity() -> dict[str, str]:
     return {
         "kind": "directional_nli",
         "model": "fixture-nli",
-        "revision": "fixture-v1",
+        "revision": "a" * 40,
         "config_sha256": "b" * 64,
     }
 

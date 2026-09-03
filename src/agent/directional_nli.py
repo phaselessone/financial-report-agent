@@ -12,9 +12,12 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 import math
+from pathlib import Path
+import re
 from typing import Any
 
 from src.evaluation.run_identity import canonical_sha256
+from src.utils.model_revision import is_full_git_commit_revision, is_hf_hub_repo_id
 
 
 class DirectionalNLIConfigError(ValueError):
@@ -33,31 +36,63 @@ _ALLOWED_CONFIG_FIELDS = frozenset(
         "trust_remote_code",
     }
 )
-_MUTABLE_REVISIONS = frozenset(
-    {
-        "current",
-        "default",
-        "dev",
-        "development",
-        "head",
-        "latest",
-        "main",
-        "master",
-        "release",
-        "stable",
-        "unversioned",
-    }
-)
+_SNAPSHOT_COMMIT_RE = re.compile(r"(?:^|[\\/])snapshots[\\/]([0-9a-f]{40})(?:[\\/]|$)")
 
 
-def _is_immutable_revision(value: str) -> bool:
-    normalized = value.strip().casefold()
-    return bool(
-        normalized
-        and normalized not in _MUTABLE_REVISIONS
-        and not normalized.startswith("refs/heads/")
-        and not normalized.startswith("heads/")
-    )
+def _is_local_model_path(model: str) -> bool:
+    try:
+        return Path(model).exists()
+    except OSError:
+        return True
+
+
+def _metadata_commit_hashes(component: Any, *, include_paths: bool) -> set[str]:
+    hashes: set[str] = set()
+
+    def add(value: Any) -> None:
+        if value is not None:
+            hashes.add(str(value).strip())
+
+    add(getattr(component, "_commit_hash", None))
+    config = getattr(component, "config", None)
+    add(getattr(config, "_commit_hash", None))
+    init_kwargs = getattr(component, "init_kwargs", None)
+    if isinstance(init_kwargs, Mapping):
+        add(init_kwargs.get("_commit_hash"))
+        if include_paths:
+            for value in init_kwargs.values():
+                if isinstance(value, (str, Path)):
+                    match = _SNAPSHOT_COMMIT_RE.search(str(value))
+                    if match:
+                        hashes.add(match.group(1))
+    return hashes
+
+
+def _require_loaded_commit_hash(
+    component: Any,
+    *,
+    component_name: str,
+    expected_revision: str,
+    include_paths: bool = False,
+) -> None:
+    hashes = _metadata_commit_hashes(component, include_paths=include_paths)
+    if not hashes:
+        raise DirectionalNLIConfigError(
+            f"loaded {component_name} has no verifiable _commit_hash metadata"
+        )
+    if len(hashes) != 1:
+        raise DirectionalNLIConfigError(
+            f"loaded {component_name} has inconsistent _commit_hash metadata"
+        )
+    actual_revision = next(iter(hashes))
+    if not is_full_git_commit_revision(actual_revision):
+        raise DirectionalNLIConfigError(
+            f"loaded {component_name} _commit_hash is not a canonical Git commit SHA"
+        )
+    if actual_revision != expected_revision:
+        raise DirectionalNLIConfigError(
+            f"loaded {component_name} _commit_hash does not match declared revision"
+        )
 
 
 def normalize_directional_nli_config(config: Mapping[str, Any]) -> dict[str, Any]:
@@ -75,11 +110,13 @@ def normalize_directional_nli_config(config: Mapping[str, Any]) -> dict[str, Any
     revision = str(config.get("revision") or "").strip()
     if kind != "directional_nli":
         raise DirectionalNLIConfigError("kind must equal directional_nli")
-    if not model:
-        raise DirectionalNLIConfigError("model must be non-empty")
-    if not _is_immutable_revision(revision):
+    if not is_hf_hub_repo_id(model) or _is_local_model_path(model):
         raise DirectionalNLIConfigError(
-            "revision must identify an immutable model revision, not a moving branch"
+            "model must be a Hugging Face Hub repo ID, not a local or relative path"
+        )
+    if not is_full_git_commit_revision(revision):
+        raise DirectionalNLIConfigError(
+            "revision must be a lowercase full 40-character Git commit SHA"
         )
 
     label_id = config.get("entailment_label_id")
@@ -179,8 +216,25 @@ def build_local_directional_nli_scorer(config: Mapping[str, Any]) -> Directional
         "local_files_only": True,
         "trust_remote_code": False,
     }
+    if _is_local_model_path(str(normalized["model"])):
+        raise DirectionalNLIConfigError("model resolved to a local path before loading")
     tokenizer = AutoTokenizer.from_pretrained(normalized["model"], **load_kwargs)
+    if _is_local_model_path(str(normalized["model"])):
+        raise DirectionalNLIConfigError("model resolved to a local path while loading tokenizer")
+    _require_loaded_commit_hash(
+        tokenizer,
+        component_name="tokenizer",
+        expected_revision=str(normalized["revision"]),
+        include_paths=True,
+    )
     model = AutoModelForSequenceClassification.from_pretrained(normalized["model"], **load_kwargs)
+    if _is_local_model_path(str(normalized["model"])):
+        raise DirectionalNLIConfigError("model resolved to a local path while loading model")
+    _require_loaded_commit_hash(
+        model,
+        component_name="model",
+        expected_revision=str(normalized["revision"]),
+    )
     label_id = int(normalized["entailment_label_id"])
     num_labels = int(getattr(model.config, "num_labels", 0) or 0)
     if num_labels <= label_id:

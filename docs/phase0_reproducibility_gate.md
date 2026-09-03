@@ -103,7 +103,7 @@ python scripts/phase0_gate.py readiness
 ```
 
 该命令写入 `outputs/phase0/readiness.json`，逐项记录 full seed、历史结果和
-reviewed semantic labels 的路径、SHA-256、行数与阻塞原因。Full seed/results 的可信哈希默认来自 reviewed attestation；语义标签的预期哈希仍必须来自其授权发布清单。Semantic labels 还必须绑定单一 directional-NLI scorer 的 kind/model/revision/config hash，至少 20 条且 ENTAILED/非 ENTAILED 各至少 5 条，并满足 precision-first constraint。每行 claim/evidence 必须有正文或 SHA-256 内容绑定，reviewed_at 必须带时区，scorer revision 不得是 moving branch；校准阈值还必须至少覆盖 5 个 predicted positives 和 5 个 true positives。任一资产、review contract、profile identity、coverage 或 calibration 不通过时，顶层状态为 `BLOCKED`、退出码为 2；当前 48 行 seed 不会被替代使用。
+reviewed semantic labels 的路径、SHA-256、行数与阻塞原因。Full seed/results 的可信哈希默认来自 reviewed attestation；语义标签的预期哈希仍必须来自其授权发布清单。Semantic labels 还必须绑定单一 directional-NLI scorer 的 kind/model/revision/config hash，至少 20 条且 ENTAILED/非 ENTAILED 各至少 5 条，并满足 precision-first constraint。每行 claim/evidence 必须有正文或 SHA-256 内容绑定，reviewed_at 必须带时区；scorer model 必须是 Hugging Face Hub repo ID，revision 必须是小写完整 40 位 Git commit SHA（branch、tag、短 SHA 均拒绝），且离线加载后的 tokenizer/model `_commit_hash` 必须与之相同。本地模型目录或缺失/漂移的 commit metadata 均 fail closed。校准阈值还必须至少覆盖 5 个 predicted positives 和 5 个 true positives。任一资产、review contract、profile identity、coverage 或 calibration 不通过时，顶层状态为 `BLOCKED`、退出码为 2；当前 48 行 seed 不会被替代使用。
 
 已有 agent trace 还必须通过 evidence integrity gate：
 

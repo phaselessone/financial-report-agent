@@ -372,7 +372,7 @@ class ClaimFlowTests(unittest.TestCase):
                 "scorer_identity": {
                     "kind": "directional_nli",
                     "model": "fixture-nli",
-                    "revision": "fixture-v1",
+                    "revision": "a" * 40,
                     "config_sha256": "b" * 64,
                 },
                 "calibrated_statuses": ["ENTAILED"],
@@ -381,7 +381,7 @@ class ClaimFlowTests(unittest.TestCase):
             scorer_identity={
                 "kind": "directional_nli",
                 "model": "fixture-nli",
-                "revision": "fixture-v1",
+                "revision": "a" * 40,
                 "config_sha256": "b" * 64,
             },
         )

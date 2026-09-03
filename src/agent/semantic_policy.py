@@ -8,36 +8,11 @@ import math
 import re
 from typing import Any
 
-
-_MUTABLE_REVISIONS = frozenset(
-    {
-        "current",
-        "default",
-        "dev",
-        "development",
-        "head",
-        "latest",
-        "main",
-        "master",
-        "release",
-        "stable",
-        "unversioned",
-    }
-)
+from src.utils.model_revision import is_full_git_commit_revision, is_hf_hub_repo_id
 
 
 class SemanticActivationError(ValueError):
     """Raised when a scorer lacks an auditable reviewed calibration contract."""
-
-
-def _immutable_revision(value: str) -> bool:
-    normalized = value.strip().casefold()
-    return bool(
-        normalized
-        and normalized not in _MUTABLE_REVISIONS
-        and not normalized.startswith("refs/heads/")
-        and not normalized.startswith("heads/")
-    )
 
 
 def _non_negative_count(value: Any, *, field_name: str) -> int:
@@ -121,8 +96,14 @@ def activate_semantic_scorer(
     }
     if any(not value for value in expected_identity.values()):
         raise SemanticActivationError("calibrated semantic scorer identity is incomplete")
-    if not _immutable_revision(expected_identity["revision"]):
-        raise SemanticActivationError("calibrated semantic scorer revision is not immutable")
+    if not is_hf_hub_repo_id(expected_identity["model"]):
+        raise SemanticActivationError(
+            "calibrated semantic scorer model must be a Hugging Face Hub repo ID"
+        )
+    if not is_full_git_commit_revision(expected_identity["revision"]):
+        raise SemanticActivationError(
+            "calibrated semantic scorer revision must be a full Git commit SHA"
+        )
     if not re.fullmatch(r"[0-9a-fA-F]{64}", expected_identity["config_sha256"]):
         raise SemanticActivationError("calibrated semantic scorer config hash is invalid")
     if expected_identity != runtime_identity or expected_identity["kind"] != scorer_kind:
