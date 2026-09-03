@@ -6,11 +6,12 @@ import json
 import unittest
 
 from src.agent.config import AgentConfig
+from src.agent.graph import run_agentic_rag
 from src.agent.nodes.decompose_query import make_decompose_query, parse_sub_questions
 from src.agent.state import new_agent_state
 from src.generation.routing import is_multi_hop_query
 from src.llm.types import LLMResponse
-from tests.test_agent_flow import FakeLLM
+from tests.test_agent_flow import FakeAnswerer, FakeLLM, FakeRuntime
 
 
 def decompose_response(sub_questions, *, prompt: int = 10, completion: int = 5) -> LLMResponse:
@@ -29,7 +30,7 @@ class ParseSubQuestionsTests(unittest.TestCase):
             {
                 "sub_questions": [
                     {"id": "q1", "query": "A公司2025年营收", "required_fields": ["company", "metric"]},
-                    {"id": "q2", "query": "B公司2025年营收", "required_fields": []},
+                    {"id": "q2", "query": "B公司2025年营收", "required_fields": [], "depends_on": ["q1"]},
                 ]
             },
             query="比较A和B",
@@ -40,6 +41,7 @@ class ParseSubQuestionsTests(unittest.TestCase):
         self.assertEqual(subs[0]["query"], "A公司2025年营收")
         self.assertEqual(subs[0]["required_fields"], ["company", "metric"])
         self.assertEqual(subs[1]["required_fields"], [])
+        self.assertEqual(subs[1]["depends_on"], ["q1"])
 
     def test_id_normalized(self) -> None:
         subs = parse_sub_questions({"sub_questions": [{"query": "x"}]}, query="q", max_sub_questions=6)
@@ -118,12 +120,33 @@ class DecomposeNodeTests(unittest.TestCase):
         self.assertEqual(state["llm_call_count"], 1)
         self.assertEqual(len(llm.calls), 1)
 
-    def test_fallback_single_subquestion(self) -> None:
+    def test_malformed_decomposition_fails_closed_instead_of_collapsing_requirements(self) -> None:
         llm = FakeLLM([LLMResponse(content="{}", provider="fake", model="fake")])
         state = new_agent_state(query="比较A公司和B公司的营收")
         make_decompose_query(llm, AgentConfig())(state)
-        self.assertEqual(len(state["sub_questions"]), 1)
-        self.assertEqual(state["sub_questions"][0]["query"], "比较A公司和B公司的营收")
+        self.assertEqual(state["sub_questions"], [])
+        self.assertEqual(state["dependency_edges"], [])
+        self.assertEqual(state["decomposition_error"], "invalid_or_empty_decomposition")
+        self.assertEqual(state["termination_reason"], "abstain_decomposition_failed")
+        self.assertEqual(state["trajectory_events"][-1]["error_type"], "INVALID_DECOMPOSITION")
+
+    def test_malformed_multi_hop_decomposition_abstains_without_synthesis(self) -> None:
+        answerer = FakeAnswerer([])
+        state = run_agentic_rag(
+            runtime=FakeRuntime([]),
+            answerer=answerer,
+            llm=FakeLLM([LLMResponse(content="{}", provider="fake", model="fake")]),
+            config=AgentConfig(),
+            query="宁德时代2025年营业收入是多少？市场对其增长逻辑怎么看？",
+        )
+
+        self.assertTrue(state["is_multi_hop"])
+        self.assertEqual(state["sub_questions"], [])
+        self.assertIsNone(state["reasoning_plan"])
+        self.assertEqual(state["termination_reason"], "abstain_decomposition_failed")
+        self.assertTrue(state["final_answer"]["abstained"])
+        self.assertEqual(state["final_answer"]["abstain_reason"], "abstain_decomposition_failed")
+        self.assertEqual(answerer.answer_calls, [])
 
     def test_max_llm_calls_terminates(self) -> None:
         llm = FakeLLM([])

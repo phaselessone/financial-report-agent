@@ -12,26 +12,10 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from src.structured.metric_registry import extract_metrics
 from src.structured.schema import Metric
 
-_METRIC_KEYWORDS: tuple[tuple[Metric, tuple[str, ...]], ...] = (
-    (
-        Metric.OPERATING_CASH_FLOW,
-        (
-            "经营活动产生的现金流量净额",
-            "经营活动现金流量净额",
-            "经营性现金流量净额",
-            "经营现金流净额",
-            "经营性现金流",
-        ),
-    ),
-    (Metric.NET_PROFIT, ("归母净利润", "扣非净利润", "净利润")),
-    (Metric.REVENUE, ("营业总收入", "营业收入", "营收")),
-    (Metric.RD_EXPENSE, ("研发费用", "研发投入", "研发支出")),
-    (Metric.GROSS_MARGIN, ("综合毛利率", "毛利率")),
-)
-
-_NET_PROFIT_RATE_GUARDS = ("净利率", "净利润率", "利润率")
+_NET_PROFIT_RATE_GUARDS = ("净利率", "净利润率")
 
 
 def match_metric(text: Any) -> Metric | None:
@@ -42,15 +26,13 @@ def match_metric(text: Any) -> Metric | None:
     """
     if not isinstance(text, str) or not text.strip():
         return None
+    matched = extract_metrics(text)
+    # Rate aliases are now first-class M6 metrics.  The guard only prevents a
+    # future/ambiguous net-profit fallback from swallowing them; it must not
+    # make ``净利率`` itself unsupported.
     if any(guard in text for guard in _NET_PROFIT_RATE_GUARDS):
-        return None
-    matched: list[Metric] = []
-    for metric, keywords in _METRIC_KEYWORDS:
-        if any(keyword in text for keyword in keywords):
-            matched.append(metric)
-    if len(matched) != 1:
-        return None
-    return matched[0]
+        matched = tuple(metric for metric in matched if metric is not Metric.NET_PROFIT)
+    return matched[0] if len(matched) == 1 else None
 
 
 def normalize_company_name(text: Any, aliases: Mapping[str, Sequence[str]]) -> str | None:

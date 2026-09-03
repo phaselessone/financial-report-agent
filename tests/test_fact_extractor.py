@@ -14,7 +14,7 @@ from decimal import Decimal
 
 from src.llm.types import LLMResponse
 from src.structured.fact_extractor import FactExtractionError, FactExtractor, validate_candidate
-from src.structured.schema import FinancialFact, Metric, PeriodType, ValueType
+from src.structured.schema import FinancialFact, Metric, PeriodBasis, PeriodType, ValueType
 
 ALIASES = {"贵州茅台": ["贵州茅台", "茅台"], "五粮液": ["五粮液"]}
 
@@ -109,6 +109,25 @@ class TestValidateCandidate(unittest.TestCase):
                 company_aliases=ALIASES,
             )
         )
+
+    def test_q2_standalone_candidate_is_accepted_with_basis(self) -> None:
+        source = "2025年二季度单季公司实现营业收入1234.5亿元"
+        fact = validate_candidate(
+            candidate(
+                period="2025年二季度单季",
+                period_basis="standalone",
+                source_span=source,
+            ),
+            doc_id="d1",
+            page=2,
+            evidence_id="E1",
+            source_text=source,
+            company_aliases=ALIASES,
+        )
+        self.assertIsNotNone(fact)
+        assert fact is not None
+        self.assertEqual(fact.period.kind, PeriodType.Q2)
+        self.assertEqual(fact.period_basis, PeriodBasis.STANDALONE)
 
     def test_period_with_anchor(self) -> None:
         fact = validate_candidate(

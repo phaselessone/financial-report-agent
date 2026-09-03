@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "directional-nli-config.schema.json",
+  "title": "Local directional NLI runtime configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "model",
+    "revision",
+    "entailment_label_id",
+    "max_length",
+    "device",
+    "local_files_only",
+    "trust_remote_code"
+  ],
+  "properties": {
+    "kind": {"const": "directional_nli"},
+    "model": {
+      "type": "string",
+      "description": "Hugging Face Hub repo ID only; local and relative paths are forbidden.",
+      "minLength": 1,
+      "maxLength": 96,
+      "pattern": "^(?=.{1,96}$)(?!.*(?:--|\\.\\.))(?!.*\\.git$)(?:[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_])?/)?[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_])?$"
+    },
+    "revision": {
+      "type": "string",
+      "description": "Full Git commit SHA for the locally cached model revision.",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "entailment_label_id": {"type": "integer", "minimum": 0},
+    "max_length": {"type": "integer", "minimum": 8, "maximum": 4096},
+    "device": {"enum": ["cpu", "cuda", "mps"]},
+    "local_files_only": {"const": true},
+    "trust_remote_code": {"const": false}
+  }
+}

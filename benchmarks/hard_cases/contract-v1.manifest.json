@@ -1,0 +1,23 @@
+{
+  "schema_version": "synthetic-hard-cases-manifest-v1",
+  "benchmark_kind": "synthetic_contract",
+  "benchmark_version": "contract-v1",
+  "review_status": "synthetic_not_human_reviewed",
+  "cases_file": "cases.jsonl",
+  "case_count": 100,
+  "category_counts": {
+    "simple_factual": 10,
+    "numeric_disambiguation": 10,
+    "cross_report_comparison": 10,
+    "derived_calculation": 10,
+    "multi_hop": 10,
+    "rewrite_required": 10,
+    "misleading_top_1": 10,
+    "conflicting_evidence": 10,
+    "must_abstain": 10,
+    "partial_answer": 10
+  },
+  "cases_file_sha256": "32576e9f9acf39b0905841f221ff22ac2bf1a817fe63468aa8f1a801e72fe29f",
+  "canonical_benchmark_hash": "44be5c94e0b9c94aaa2c77bfad10352802fff4d6e4b363c76746182825d36de9",
+  "case_ids_hash": "6690f3f46898e6d9ef17462135438d0f4038aaff36cb63c3346275188980f45c"
+}

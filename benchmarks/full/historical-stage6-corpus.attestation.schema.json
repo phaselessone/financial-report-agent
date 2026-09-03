@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/phaselessone/financial-report-agent/benchmarks/full/historical-stage6-corpus.attestation.schema.json",
+  "title": "Historical Stage 6 Corpus Attestation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "corpus_id",
+    "benchmark_profile",
+    "asset",
+    "source",
+    "review",
+    "benchmark_binding"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "corpus_id": {
+      "const": "corpus:4ff7ba48fd38"
+    },
+    "benchmark_profile": {
+      "const": "historical-full-raw"
+    },
+    "asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "legacy_sha1", "sha256", "format", "chunk_count"],
+      "properties": {
+        "path": {
+          "const": "tmp_stage6_data/chunks/chunks.jsonl"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "legacy_sha1": {
+          "const": "4ff7ba48fd38a4400e581fac32c43c4217de1ece"
+        },
+        "format": {
+          "const": "chunks-jsonl"
+        },
+        "chunk_count": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["origin", "owner", "acquired_at", "source_ref"],
+      "properties": {
+        "origin": {
+          "type": "string",
+          "minLength": 1
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "acquired_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source_ref": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reviewer_id", "review_batch", "reviewed_at"],
+      "properties": {
+        "status": {
+          "const": "reviewed"
+        },
+        "reviewer_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "review_batch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reviewed_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "benchmark_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["seed_sha256", "historical_results_sha256"],
+      "properties": {
+        "seed_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "historical_results_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    }
+  }
+}

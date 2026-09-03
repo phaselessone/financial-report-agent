@@ -1,0 +1,51 @@
+{
+  "fixture_contract": {
+    "kind": "controlled_synthetic_financial_business_record",
+    "version": "1",
+    "public_safe": true,
+    "contains_private_or_raw_pdf_content": false,
+    "provenance_note": "This is a minimal fictional-issuer record created only for deterministic tests. It models annual-report revenue semantics but is not copied from a real report and is not reviewed benchmark evidence."
+  },
+  "query": "星河精工2025年营业收入是多少？",
+  "company_aliases": {
+    "星河精工": [
+      "星河精工"
+    ]
+  },
+  "fact": {
+    "fact_id": "controlled-synthetic-revenue-fy2025",
+    "company": "星河精工",
+    "metric": "revenue",
+    "period": {
+      "kind": "FY",
+      "year": 2025
+    },
+    "value_type": "actual",
+    "value": "31010000000.0",
+    "unit": "元",
+    "doc_id": "controlled-synthetic-annual-report-v1",
+    "page": 17,
+    "evidence_id": "controlled-synthetic-revenue-fy2025-p17",
+    "raw_value": "310.1亿元",
+    "source_span": "星河精工2025年度营业收入为310.1亿元。"
+  },
+  "chunk": {
+    "chunk_id": "controlled-synthetic-revenue-fy2025-p17",
+    "evidence_id": "controlled-synthetic-revenue-fy2025-p17",
+    "doc_id": "controlled-synthetic-annual-report-v1",
+    "file_name": "controlled-synthetic-annual-report-v1.pdf",
+    "page_start": 17,
+    "page_end": 17,
+    "text": "星河精工2025年度营业收入为310.1亿元。",
+    "child_text": "星河精工2025年度营业收入为310.1亿元。",
+    "support_span": "星河精工2025年度营业收入为310.1亿元。",
+    "section_title": "主要会计数据",
+    "section_path": "年度报告/主要会计数据",
+    "chunk_type": "table_protected",
+    "element_type": "table_row"
+  },
+  "expected": {
+    "answer": "星河精工2025年营业收入为310.1亿元。",
+    "citation_page": 17
+  }
+}

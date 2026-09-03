@@ -1,4 +1,3 @@
-import json
 import unittest
 from collections import Counter
 from pathlib import Path
@@ -6,6 +5,8 @@ from pathlib import Path
 from src.evaluation.answer_eval import materialize_answer_eval_sets
 from src.utils.io import read_json
 from src.utils.io import read_jsonl
+from run_answer_eval import enforce_historical_evidence_gate
+from scripts.phase0_gate import DEFAULT_FULL_ATTESTATION
 
 
 class FullSeedRestoreTests(unittest.TestCase):
@@ -43,6 +44,28 @@ class FullSeedRestoreTests(unittest.TestCase):
         chunks_path = Path("tmp_stage6_data/chunks/chunks.jsonl")
         if not chunks_path.exists():
             self.skipTest(f"stage6 chunks not found: {chunks_path}")
+
+        evidence_audit = enforce_historical_evidence_gate(
+            profile="historical-full-raw",
+            seed_path=self.seed_path,
+            historical_results_path=self.artifact_results_path,
+            benchmark_attestation_path=DEFAULT_FULL_ATTESTATION,
+            chunks_path=chunks_path,
+            corpus_attestation_path=Path(
+                "benchmarks/full/historical-stage6-corpus.attestation.json"
+            ),
+            output_path=Path(
+                "tmp_stage6_data/eval_set/historical_full_evidence_audit.json"
+            ),
+        )
+        self.assertIsNotNone(evidence_audit)
+        assert evidence_audit is not None
+        self.assertEqual(
+            evidence_audit["status"],
+            "READY",
+            f"stage6 content audit failed: {evidence_audit.get('blocking_reasons')}",
+        )
+        self.assertTrue(evidence_audit["formal_release_ready"])
 
         report_output_path = Path("tmp_stage6_data/eval_set/full_seed_materialization_report.json")
         dev_output_path = Path("tmp_stage6_data/eval_set/full_seed_materialization_dev.jsonl")

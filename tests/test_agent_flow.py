@@ -55,6 +55,14 @@ def llm_call_kinds(llm) -> list[str]:
     return kinds
 
 
+def executed_report_queries(state: dict) -> list[str]:
+    return [
+        str((call.get("arguments") or {}).get("query") or "")
+        for call in state.get("tool_calls") or []
+        if call.get("tool_name") == "report_search"
+    ]
+
+
 def make_result(rows: list[dict]) -> dict:
     return {
         "query_mode": "fact",
@@ -101,6 +109,12 @@ def rewrite_response(rewritten: str, reason: str, *, prompt: int = 10, completio
         prompt_tokens=prompt,
         completion_tokens=completion,
     )
+
+
+def claim_extraction_fallback_response() -> LLMResponse:
+    """Reserve one malformed response for the extraction call before rewrite."""
+
+    return LLMResponse(content="{}", provider="fake", model="fake")
 
 
 class FakeAnswerer:
@@ -206,7 +220,7 @@ class AgentFlowTests(unittest.TestCase):
             runtime=runtime,
             answerer=answerer,
             llm=llm,
-            config=AgentConfig(),
+            config=AgentConfig(strict_claim_verification=False),
             query="晶圆代工价格是多少？",
         )
         self.assertEqual(state["retrieval_count"], 2)
@@ -228,7 +242,7 @@ class AgentFlowTests(unittest.TestCase):
             runtime=runtime,
             answerer=answerer,
             llm=llm,
-            config=AgentConfig(),
+            config=AgentConfig(strict_claim_verification=False),
             query="比较A公司和B公司的策略差异",
         )
         self.assertEqual(state["retrieval_count"], 2)
@@ -268,7 +282,10 @@ class AgentFlowTests(unittest.TestCase):
             runtime=runtime,
             answerer=answerer,
             llm=llm,
-            config=AgentConfig(max_retrieval_rounds=1),  # legacy regenerate path when re-retrieval is exhausted
+            config=AgentConfig(
+                max_retrieval_rounds=1,
+                strict_claim_verification=False,
+            ),  # legacy regenerate path when re-retrieval is exhausted
             query="半导体行业景气度如何？",
         )
         self.assertEqual(state["generation_count"], 2)
@@ -289,7 +306,12 @@ class AgentFlowTests(unittest.TestCase):
             ]
         )
         runtime = FakeRuntime([first_evidence, second_evidence])
-        llm = FakeLLM([rewrite_response("A公司 B公司 策略 对比", "source_diversity_missing")])
+        llm = FakeLLM(
+            [
+                claim_extraction_fallback_response(),
+                rewrite_response("A公司 B公司 策略 对比", "source_diversity_missing"),
+            ]
+        )
         unsupported = supported_draft("第一次草稿")
         unsupported["support_validation"] = {"supported": False}
         answerer = FakeAnswerer([unsupported, supported_draft("A公司强调AI算力，B公司聚焦存储。")])
@@ -297,7 +319,7 @@ class AgentFlowTests(unittest.TestCase):
             runtime=runtime,
             answerer=answerer,
             llm=llm,
-            config=AgentConfig(),
+            config=AgentConfig(strict_claim_verification=False),
             query="比较A公司和B公司的策略差异",
         )
         self.assertEqual(state["termination_reason"], "completed")
@@ -305,6 +327,10 @@ class AgentFlowTests(unittest.TestCase):
         self.assertEqual(state["rewrite_count"], 1)
         self.assertEqual(state["generation_count"], 2)
         self.assertEqual(len(state["rewritten_queries"]), 1)
+        self.assertEqual(
+            executed_report_queries(state),
+            ["比较A公司和B公司的策略差异", "A公司 B公司 策略 对比"],
+        )
         self.assertEqual(state["final_answer"]["final_answer"], "A公司强调AI算力，B公司聚焦存储。")
 
     def test_verification_retry_abstains_when_refetched_evidence_still_insufficient(self) -> None:
@@ -320,7 +346,12 @@ class AgentFlowTests(unittest.TestCase):
         )
         second_evidence = make_result([make_row(chunk_id="c2", doc_id="d1", text="A公司聚焦国产替代。")])
         runtime = FakeRuntime([first_evidence, second_evidence])
-        llm = FakeLLM([rewrite_response("A公司 B公司 策略", "source_diversity_missing")])
+        llm = FakeLLM(
+            [
+                claim_extraction_fallback_response(),
+                rewrite_response("A公司 B公司 策略", "source_diversity_missing"),
+            ]
+        )
         unsupported = supported_draft("草稿")
         unsupported["support_validation"] = {"supported": False}
         answerer = FakeAnswerer([unsupported])
@@ -336,6 +367,10 @@ class AgentFlowTests(unittest.TestCase):
         self.assertEqual(state["retrieval_count"], 2)
         self.assertEqual(state["rewrite_count"], 1)
         self.assertEqual(state["generation_count"], 1)
+        self.assertEqual(
+            executed_report_queries(state),
+            ["比较A公司和B公司的策略差异", "A公司 B公司 策略"],
+        )
 
     def test_low_confidence_supported_draft_retries_with_rewrite(self) -> None:
         # A supported-but-low-confidence draft (grade passed round 1, but the
@@ -353,7 +388,12 @@ class AgentFlowTests(unittest.TestCase):
             ]
         )
         runtime = FakeRuntime([first_evidence, second_evidence])
-        llm = FakeLLM([rewrite_response("A公司 B公司 策略 对比", "low_confidence_answer")])
+        llm = FakeLLM(
+            [
+                claim_extraction_fallback_response(),
+                rewrite_response("A公司 B公司 策略 对比", "low_confidence_answer"),
+            ]
+        )
         low_confidence = supported_draft("第一次草稿")
         low_confidence["confidence_label"] = "low"
         confident = supported_draft("A公司强调AI算力，B公司聚焦存储。")
@@ -363,13 +403,17 @@ class AgentFlowTests(unittest.TestCase):
             runtime=runtime,
             answerer=answerer,
             llm=llm,
-            config=AgentConfig(),
+            config=AgentConfig(strict_claim_verification=False),
             query="比较A公司和B公司的策略差异",
         )
         self.assertEqual(state["termination_reason"], "completed")
         self.assertEqual(state["rewrite_count"], 1)
         self.assertEqual(state["retrieval_count"], 2)
         self.assertEqual(state["generation_count"], 2)
+        self.assertEqual(
+            executed_report_queries(state),
+            ["比较A公司和B公司的策略差异", "A公司 B公司 策略 对比"],
+        )
         self.assertEqual(state["final_answer"]["final_answer"], "A公司强调AI算力，B公司聚焦存储。")
 
     def test_high_confidence_supported_draft_finalizes_without_retry(self) -> None:
@@ -414,7 +458,7 @@ class AgentFlowTests(unittest.TestCase):
             runtime=runtime,
             answerer=answerer,
             llm=llm,
-            config=AgentConfig(),
+            config=AgentConfig(strict_claim_verification=False),
             query="比较A公司和B公司的策略差异",
         )
         self.assertEqual(state["termination_reason"], "completed")
@@ -438,7 +482,12 @@ class AgentFlowTests(unittest.TestCase):
             ]
         )
         runtime = FakeRuntime([first_evidence, second_evidence])
-        llm = FakeLLM([rewrite_response("A公司 B公司 策略 对比", "source_diversity_missing")])
+        llm = FakeLLM(
+            [
+                claim_extraction_fallback_response(),
+                rewrite_response("A公司 B公司 策略 对比", "source_diversity_missing"),
+            ]
+        )
         unsupported = supported_draft("第一次草稿")
         unsupported["support_validation"] = {"supported": False}
         answerer = FakeAnswerer([unsupported, supported_draft("A公司强调AI算力，B公司聚焦存储。")])
@@ -446,7 +495,7 @@ class AgentFlowTests(unittest.TestCase):
             runtime=runtime,
             answerer=answerer,
             llm=llm,
-            config=AgentConfig(),
+            config=AgentConfig(strict_claim_verification=False),
             query="比较A公司和B公司的策略差异",
         )
         self.assertEqual(state["termination_reason"], "completed")
@@ -458,6 +507,10 @@ class AgentFlowTests(unittest.TestCase):
         self.assertEqual(first_rows, {"c1", "c3"})
         self.assertIn("c1", second_rows)
         self.assertIn("c2", second_rows)
+        self.assertEqual(
+            executed_report_queries(state),
+            ["比较A公司和B公司的策略差异", "A公司 B公司 策略 对比"],
+        )
 
     def test_abstained_draft_with_evidence_retries_with_rewrite(self) -> None:
         # The answerer abstained although evidence was seen: retry with a rewrite
@@ -484,7 +537,7 @@ class AgentFlowTests(unittest.TestCase):
             runtime=runtime,
             answerer=answerer,
             llm=llm,
-            config=AgentConfig(),
+            config=AgentConfig(strict_claim_verification=False),
             query="比较A公司和B公司的策略差异",
         )
         self.assertEqual(state["termination_reason"], "completed")
@@ -564,7 +617,7 @@ class AgentFlowTests(unittest.TestCase):
             runtime=runtime,
             answerer=answerer,
             llm=llm,
-            config=AgentConfig(),
+            config=AgentConfig(strict_claim_verification=False),
             query="比较A公司和B公司的策略差异",
             domain_hint="semiconductor",
         )

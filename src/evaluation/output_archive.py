@@ -2,10 +2,18 @@ from __future__ import annotations
 
 import re
 import shutil
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 
+from src.evaluation.run_metadata import normalize_benchmark_profile
 from src.utils.io import ensure_dir, write_json
+
+BENCHMARK_PROFILE_CONTRACT = {
+    "canonical_profiles": ["current-dev", "historical-full-core", "historical-full-raw"],
+    "legacy_aliases": {"historical-full": "historical-full-raw"},
+    "metric_merge_policy": "forbid_cross_profile_merge",
+}
 
 ARTIFACT_LABEL_RE = re.compile(r"[^0-9A-Za-z._-]+")
 
@@ -36,7 +44,7 @@ def archive_output_bundle(
     *,
     output_dir: Path,
     artifact_dir: Path,
-    include_names: tuple[str, ...] = ("reports", "badcases"),
+    include_names: tuple[str, ...] = ("reports", "badcases", "eval"),
 ) -> Path:
     ensure_dir(artifact_dir)
     for name in include_names:
@@ -55,13 +63,17 @@ def write_scratch_run_policy(
     benchmark_profile: str,
     summary_path: Path,
     source_manifest_path: Path | None = None,
+    treatments: Mapping[str, object] | None = None,
 ) -> Path:
     policy_path = output_dir / "RUN_POLICY.json"
+    benchmark_profile = normalize_benchmark_profile(benchmark_profile)
     policy = {
         "mode": "scratch",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "split": split,
         "benchmark_profile": benchmark_profile,
+        "benchmark_profile_contract": BENCHMARK_PROFILE_CONTRACT,
+        "treatments": dict(treatments or {}),
         "scratch_output_dir": str(output_dir),
         "latest_summary_path": str(summary_path),
         "latest_source_manifest_path": str(source_manifest_path) if source_manifest_path is not None else "",

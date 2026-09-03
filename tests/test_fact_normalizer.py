@@ -52,14 +52,14 @@ class TestMatchMetric(unittest.TestCase):
     def test_operating_cash_flow_short(self) -> None:
         self.assertEqual(match_metric("经营性现金流"), Metric.OPERATING_CASH_FLOW)
 
-    def test_net_margin_rate_not_net_profit(self) -> None:
-        self.assertIsNone(match_metric("净利率"))
+    def test_net_margin_is_first_class_metric(self) -> None:
+        self.assertEqual(match_metric("净利率"), Metric.NET_MARGIN)
 
-    def test_net_profit_rate_not_net_profit(self) -> None:
-        self.assertIsNone(match_metric("净利润率"))
+    def test_net_profit_rate_is_first_class_metric(self) -> None:
+        self.assertEqual(match_metric("净利润率"), Metric.NET_MARGIN)
 
-    def test_gross_profit_not_in_v1(self) -> None:
-        self.assertIsNone(match_metric("毛利"))
+    def test_gross_profit_supported_by_extended_registry(self) -> None:
+        self.assertEqual(match_metric("毛利"), Metric.GROSS_PROFIT)
 
     def test_multiple_metrics_ambiguous(self) -> None:
         self.assertIsNone(match_metric("营收和净利润"))

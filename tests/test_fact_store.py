@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
+import duckdb
+
 from src.structured.fact_store import FactStore
-from src.structured.schema import FinancialFact, Metric, Period, PeriodType, ValueType
+from src.structured.schema import FinancialFact, Metric, Period, PeriodBasis, PeriodType, ValueType
 
 
 def make_fact(company="贵州茅台", metric="revenue", year=2025, kind="FY", value="123450000000", **overrides):
@@ -97,6 +100,22 @@ class TestFactStore(unittest.TestCase):
         self.assertEqual(restored.value, Decimal("25"))
         self.assertEqual(restored.metric, Metric.GROSS_MARGIN)
 
+    def test_v2_coordinates_round_trip(self) -> None:
+        store = FactStore(":memory:")
+        self.addCleanup(store.close)
+        fact = make_fact(
+            accounting_scope="consolidated",
+            period_basis="standalone",
+            source_date="2026-03-28",
+            revision_status="restated",
+        )
+        store.upsert([fact])
+        restored = store.all_facts()[0]
+        self.assertEqual(restored.accounting_scope, "consolidated")
+        self.assertEqual(restored.period_basis, PeriodBasis.STANDALONE)
+        self.assertEqual(restored.source_date, date(2026, 3, 28))
+        self.assertEqual(restored.revision_status, "restated")
+
     def test_decimal_exactness_preserved(self) -> None:
         store = FactStore(":memory:")
         self.addCleanup(store.close)
@@ -133,6 +152,51 @@ class TestFactStore(unittest.TestCase):
             restored = second.all_facts()[0]
             self.assertEqual(restored, fact)
 
+    def test_loads_legacy_parquet_without_v2_columns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            parquet_path = Path(tmp) / "legacy.parquet"
+            conn = duckdb.connect(":memory:")
+            conn.execute(
+                """
+                CREATE TABLE legacy AS SELECT
+                    'Flegacy'::VARCHAR AS fact_id,
+                    '贵州茅台'::VARCHAR AS company,
+                    'revenue'::VARCHAR AS metric,
+                    'FY'::VARCHAR AS period_kind,
+                    2025::INTEGER AS year,
+                    'actual'::VARCHAR AS value_type,
+                    '123450000000'::VARCHAR AS value,
+                    '元'::VARCHAR AS unit,
+                    'doc-legacy'::VARCHAR AS doc_id,
+                    3::INTEGER AS page,
+                    'E-legacy'::VARCHAR AS evidence_id,
+                    '1234.5亿元'::VARCHAR AS raw_value,
+                    '2025年公司实现营业收入1234.5亿元'::VARCHAR AS source_span
+                """
+            )
+            conn.execute("COPY legacy TO ? (FORMAT PARQUET)", [str(parquet_path)])
+            conn.close()
+
+            store = FactStore(":memory:")
+            self.addCleanup(store.close)
+            self.assertEqual(store.load_parquet(parquet_path), 1)
+            restored = store.all_facts()[0]
+            self.assertIsNone(restored.accounting_scope)
+            self.assertIsNone(restored.period_basis)
+            self.assertIsNone(restored.source_date)
+            self.assertIsNone(restored.revision_status)
+
+    def test_query_many_accepts_period_basis_enum(self) -> None:
+        store = FactStore(":memory:")
+        self.addCleanup(store.close)
+        store.upsert([
+            make_fact(period=Period("Q2", 2025), period_basis="standalone", evidence_id="E-single"),
+            make_fact(period=Period("Q2", 2025), period_basis="cumulative", evidence_id="E-ytd"),
+        ])
+        facts = store.query_many(period_bases=[PeriodBasis.STANDALONE])
+        self.assertEqual(len(facts), 1)
+        self.assertEqual(facts[0].period_basis, PeriodBasis.STANDALONE)
+
     def test_file_backed_persistence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "facts.duckdb"
@@ -143,6 +207,65 @@ class TestFactStore(unittest.TestCase):
             reopened = FactStore(db_path)
             self.addCleanup(reopened.close)
             self.assertEqual(reopened.count(), 1)
+
+    def test_reopens_and_migrates_legacy_duckdb(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "legacy.duckdb"
+            conn = duckdb.connect(str(db_path))
+            conn.execute(
+                """
+                CREATE TABLE facts (
+                    fact_id VARCHAR PRIMARY KEY, company VARCHAR NOT NULL,
+                    metric VARCHAR NOT NULL, period_kind VARCHAR NOT NULL,
+                    year INTEGER NOT NULL, value_type VARCHAR NOT NULL,
+                    value VARCHAR NOT NULL, unit VARCHAR NOT NULL,
+                    doc_id VARCHAR NOT NULL, page INTEGER NOT NULL,
+                    evidence_id VARCHAR NOT NULL, raw_value VARCHAR NOT NULL,
+                    source_span VARCHAR NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO facts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    "Flegacy",
+                    "贵州茅台",
+                    "revenue",
+                    "FY",
+                    2025,
+                    "actual",
+                    "123450000000",
+                    "元",
+                    "doc-legacy",
+                    3,
+                    "E-legacy",
+                    "1234.5亿元",
+                    "2025年公司实现营业收入1234.5亿元",
+                ],
+            )
+            conn.close()
+
+            store = FactStore(db_path)
+            self.addCleanup(store.close)
+            restored = store.all_facts()[0]
+            self.assertEqual(restored.fact_id, "Flegacy")
+            self.assertIsNone(restored.accounting_scope)
+            self.assertIsNone(restored.period_basis)
+            self.assertIsNone(restored.source_date)
+            self.assertIsNone(restored.revision_status)
+
+    def test_query_many_filters_before_materializing_rows(self) -> None:
+        store = FactStore(":memory:")
+        self.addCleanup(store.close)
+        store.upsert([make_fact()])
+        store._conn.execute(
+            "INSERT INTO facts (fact_id, company, metric, period_kind, year, value_type, value, unit, "
+            "doc_id, page, evidence_id, raw_value, source_span) "
+            "VALUES ('Fbad','过滤范围外','revenue','FY',2025,'actual','not-a-number','元','d',1,'Ebad','x','span')"
+        )
+        facts = store.query_many(companies=["贵州茅台"], metrics=[Metric.REVENUE])
+        self.assertEqual(len(facts), 1)
+        self.assertEqual(facts[0].company, "贵州茅台")
 
     def test_period_values_preserved(self) -> None:
         store = FactStore(":memory:")

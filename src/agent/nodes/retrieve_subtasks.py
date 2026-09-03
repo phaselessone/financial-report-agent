@@ -75,6 +75,10 @@ def make_retrieve_subtasks(runtime, fact_store, company_aliases, config: AgentCo
                         "query": query,
                         "source": "structured",
                         "fact_count": len(structured_result["facts"]),
+                        "status": "completed",
+                        "evidence_ids": [row.get("chunk_id") for row in fact_rows if row.get("chunk_id")],
+                        "required_fields": list(sub.get("required_fields") or []),
+                        "missing_fields": [],
                     }
                 )
             else:
@@ -104,6 +108,10 @@ def make_retrieve_subtasks(runtime, fact_store, company_aliases, config: AgentCo
                         "source": "rag",
                         "new_chunk_ids": new_ids,
                         "row_count": len(rows),
+                        "status": "completed" if rows else "insufficient",
+                        "evidence_ids": [row.get("chunk_id") for row in rows if row.get("chunk_id")],
+                        "required_fields": list(sub.get("required_fields") or []),
+                        "missing_fields": [] if rows else list(sub.get("required_fields") or []),
                     }
                 )
 

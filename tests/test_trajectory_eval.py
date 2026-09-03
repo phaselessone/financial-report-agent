@@ -12,6 +12,7 @@ from src.evaluation.trajectory_eval import (
     build_failed_agent_trace_row,
     percentile,
 )
+from src.evaluation.run_identity import RunIdentity, hash_case_ids
 from src.generation.routing import FALLBACK_ANSWER
 from tests.test_agent_flow import FakeAnswerer, FakeLLM, FakeRuntime, make_result, make_row, rewrite_response, supported_draft
 
@@ -36,6 +37,14 @@ TRACE_FIELDS = (
     "termination_reason",
     "rewritten_queries",
     "retrieval_history",
+    "tool_calls",
+    "tool_call_count",
+    "calculations",
+    "claims",
+    "claim_verification_summary",
+    "trajectory_events",
+    "dependency_coverage",
+    "failure_attribution",
     "final_answer",
     "evidence_summary",
     "abstained",
@@ -103,6 +112,64 @@ def make_trace_row(*, counters: dict | None = None, latency_ms: float = 0.0, fai
 
 
 class AgentTraceRowTests(unittest.TestCase):
+    @staticmethod
+    def _run_identity() -> RunIdentity:
+        return RunIdentity(
+            benchmark_profile="contract-v1",
+            benchmark_version="1.0",
+            benchmark_hash="benchmark-sha256",
+            case_ids_hash=hash_case_ids(["semiconductor_ms_comp_01"]),
+            case_count=1,
+            corpus_hash="corpus-sha256",
+            model="model-x",
+            provider="provider-x",
+            model_revision="rev-1",
+            temperature=0.0,
+            prompt_version="prompt-v2",
+            budgets={"max_steps": 12},
+            feature_flags={"runtime": {}, "treatments": {"pipeline": "agentic"}},
+            git_commit="abc123",
+            source_manifest_hash="source-sha256",
+        )
+
+    def test_trace_row_carries_run_identity(self) -> None:
+        identity = self._run_identity()
+        row = build_agent_trace_row(
+            {"termination_reason": "completed"},
+            eval_row(),
+            end_to_end_latency_ms=1.0,
+            run_identity=identity,
+        )
+
+        self.assertEqual(row["run_identity"], identity.to_dict())
+        self.assertEqual(row["run_id"], identity.run_id)
+
+    def test_strict_trace_materialization_requires_run_identity(self) -> None:
+        with self.assertRaisesRegex(ValueError, "requires run_identity"):
+            build_agent_trace_row(
+                {"termination_reason": "completed"},
+                eval_row(),
+                end_to_end_latency_ms=1.0,
+                strict=True,
+            )
+        with self.assertRaisesRegex(ValueError, "requires run_identity"):
+            build_failed_agent_trace_row(
+                eval_row=eval_row(),
+                error=RuntimeError("boom"),
+                end_to_end_latency_ms=1.0,
+                strict=True,
+            )
+
+        identity = self._run_identity()
+        row = build_agent_trace_row(
+            {"termination_reason": "completed"},
+            eval_row(),
+            end_to_end_latency_ms=1.0,
+            run_identity=identity,
+            strict=True,
+        )
+        self.assertEqual(row["run_id"], identity.run_id)
+
     def test_trace_row_carries_checklist_fields_and_matches_state(self) -> None:
         runtime = FakeRuntime([make_result([make_row(chunk_id="c1", doc_id="d1", text="半导体行业景气度持续回升。")])])
         llm = FakeLLM([])
@@ -151,6 +218,21 @@ class AgentTraceRowTests(unittest.TestCase):
         self.assertEqual(row["api_latency_ms_total"], 350.0)
         self.assertEqual(row["api_retries_total"], 3)
 
+    def test_trace_row_carries_dependency_coverage(self) -> None:
+        coverage = {
+            "required": ["q1", "q2"],
+            "completed": ["q1"],
+            "missing": ["q2"],
+            "coverage_ratio": 0.5,
+            "decision": "partial",
+        }
+        row = build_agent_trace_row(
+            {"termination_reason": "completed", "dependency_coverage": coverage},
+            eval_row(),
+            end_to_end_latency_ms=1.0,
+        )
+        self.assertEqual(row["dependency_coverage"], coverage)
+
     def test_trace_row_handles_abstain_terminal_without_draft(self) -> None:
         # max_llm_calls=0: synthesize terminates before generating, finalize abstains.
         runtime = FakeRuntime([])
@@ -181,6 +263,73 @@ class AgentTraceRowTests(unittest.TestCase):
         self.assertEqual(row["llm_call_count"], 0)
         self.assertEqual(row["end_to_end_latency_ms"], 9.0)
         self.assertIn("final_answer", row)
+        self.assertEqual(row["termination_reason"], "runtime_exception")
+        self.assertEqual(len(row["trajectory_events"]), 1)
+        self.assertEqual(row["trajectory_events"][0]["status"], "FAILED")
+        self.assertEqual(row["trajectory_events"][0]["event_type"], "materialization")
+        self.assertTrue(row["failure_attribution"]["has_failure"])
+
+    def test_failed_trace_row_preserves_exception_partial_state(self) -> None:
+        error = RuntimeError("boom")
+        error.agent_partial_state = {
+            "step_count": 3,
+            "tool_call_count": 2,
+            "total_tokens": 41,
+            "termination_reason": "node_exception",
+            "tool_calls": [{"tool_name": "calculator", "status": "SUCCESS"}],
+            "calculations": {"growth": {"status": "SUCCESS", "value": "20"}},
+            "claims": [{"claim_id": "c1", "text": "增长 20"}],
+            "trajectory_events": [
+                {
+                    "event_id": "e1",
+                    "dependencies": [],
+                    "recovery_of": [],
+                    "node": "execute_step",
+                    "status": "FAILED",
+                    "error_type": "tool_execution_failed",
+                    "budget_usage": {"tokens": 41},
+                }
+            ],
+        }
+
+        row = build_failed_agent_trace_row(
+            eval_row=eval_row(category="agent_recovery"),
+            error=error,
+            end_to_end_latency_ms=9.0,
+        )
+
+        self.assertTrue(row["failed"])
+        self.assertEqual(row["step_count"], 3)
+        self.assertEqual(row["tool_call_count"], 2)
+        self.assertEqual(row["total_tokens"], 41)
+        self.assertEqual(row["tool_calls"], error.agent_partial_state["tool_calls"])
+        self.assertEqual(row["calculations"], error.agent_partial_state["calculations"])
+        self.assertEqual(row["claims"], error.agent_partial_state["claims"])
+        self.assertEqual(row["trajectory_events"], error.agent_partial_state["trajectory_events"])
+        self.assertEqual(row["failure_attribution"]["root_cause"], "tool_execution_failed")
+
+    def test_materialized_trace_rows_include_failure_attribution(self) -> None:
+        success = build_agent_trace_row(
+            {
+                "termination_reason": "completed",
+                "trajectory_events": [
+                    {"event_id": "e1", "dependencies": [], "recovery_of": [], "step": 1, "node": "retrieve", "status": "FAILED", "error_type": "retrieval_miss"},
+                    {"event_id": "e2", "dependencies": ["e1"], "recovery_of": ["e1"], "step": 2, "node": "retrieve", "status": "SUCCESS"},
+                ],
+            },
+            eval_row(),
+            end_to_end_latency_ms=4.0,
+        )
+        failed = build_failed_agent_trace_row(
+            eval_row=eval_row(),
+            error=RuntimeError("provider unavailable"),
+            end_to_end_latency_ms=5.0,
+        )
+
+        self.assertIsNone(success["failure_attribution"]["root_cause"])
+        self.assertEqual(success["failure_attribution"]["root_cause_resolution"], "recovered")
+        self.assertTrue(success["failure_attribution"]["recovered"])
+        self.assertTrue(failed["failure_attribution"]["has_failure"])
 
 
 class PercentileTests(unittest.TestCase):

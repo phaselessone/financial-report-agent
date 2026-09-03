@@ -20,6 +20,9 @@ class ClaimTypeTests(unittest.TestCase):
     def test_derived_growth_keyword(self) -> None:
         self.assertEqual(classify_claim_type("营收同比增长31.1%。", ["d1"]), "DERIVED")
 
+    def test_deterministic_calculator_result_is_derived(self) -> None:
+        self.assertEqual(classify_claim_type("计算结果为-15%。", []), "DERIVED")
+
     def test_derived_ratio_verb(self) -> None:
         self.assertEqual(classify_claim_type("毛利率占营收比为45.2%。", ["d1"]), "DERIVED")
 
