@@ -4,12 +4,11 @@
 
 ## 1. 最终结论与状态口径
 
-截至 2026-09-03，代码实现、严格产物合同与本轮资产门禁加固已通过本地完整 suite
-和 CI 等价命令。上一冻结基线 `446a316` 的 hosted deterministic-ci run
-[`33260006502`](https://github.com/phaselessone/financial-report-agent/actions/runs/33260006502)
-已在 Ubuntu 与 Windows 通过；本轮 2026-09-03 hardening 在本快照中尚待提交并触发
-新的 hosted run，因此不能用旧 run 冒充新代码的 hosted 证据。reviewed
-hard-case/semantic/Stage 6 资产仍缺失，
+截至 2026-09-03，代码实现、严格产物合同与本轮资产门禁加固已通过本地完整 suite、
+CI 等价命令和 hardening 实现提交 `02fdd7a8cc58fdc0d6fd6027948bdb08f85c755a` 的 hosted
+deterministic-ci run
+[`33712854541`](https://github.com/phaselessone/financial-report-agent/actions/runs/33712854541)：
+Ubuntu 与 Windows 均成功。reviewed hard-case/semantic/Stage 6 资产仍缺失，
 因此项目不能标记为全局 COMPLETE，也不能发布 reviewed benchmark 性能结论。为避免把不同层次的“完成”
 混为一谈，本文件只使用以下三种口径：
 
@@ -22,7 +21,7 @@ hard-case/semantic/Stage 6 资产仍缺失，
 - Phase A–D 的生产行为与严格合同为 **`COMPLETE_LOCAL`**。
 - Phase E 的四 profile 执行框架、评估与归因框架为 **`COMPLETE_LOCAL`**；当前实际四 profile run 仅为 **`SYNTHETIC_CONTRACT_ONLY / NON-PUBLISHABLE`**。
 - Phase F 的 semantic scorer 接线、校准门禁和历史证据门禁为 **`COMPLETE_LOCAL`**；reviewed semantic labels 与 Stage 6 历史 corpus 资产为 **`BLOCKED_EXTERNAL_ASSETS`**。
-- Phase G 的 CI 合同、文档和可观测性为 **`COMPLETE_LOCAL`**；上一冻结基线为 **`HOSTED_GREEN`**，本轮 hardening 的 hosted 状态在新分支提交推送前保持 **`PENDING_HOSTED`**。
+- Phase G 的 CI 合同、文档和可观测性为 **`COMPLETE_LOCAL / HOSTED_GREEN`**；当前 hardening 已由 run `33712854541` 在 Ubuntu 与 Windows 验收。
 - 历史 full seed/results 已通过 attestation 身份门禁，但历史 Stage 6 corpus 内容重放仍独立阻塞。
 - M10 继续 `KEEP_M10_P2`；现有 corpus 质量证据不支持提升 OCR/Table 优先级。
 
@@ -67,7 +66,7 @@ hard-case/semantic/Stage 6 资产仍缺失，
 | D Structured Fact v2 | `COMPLETE_LOCAL` | 显式 `MetricSpec`；ACTUAL/ADJUSTED/FORECAST 严格区分；scope/date/revision/basis；Q2 单季与累计口径不再自动混同；DuckDB filter pushdown；legacy JSONL 与 read-only DuckDB 加载 | 无本地代码缺口 |
 | E 四 profile / reviewed metrics | 框架 `COMPLETE_LOCAL`；当前 run 为 `SYNTHETIC_CONTRACT_ONLY` | 四个 canonical profile；共享 comparison identity；完整 per-case trajectory；同参 report-search 跨计划去重；case 级 executor failure；gold/process/contract 指标分层；Unnecessary Tool Call Rate 使用 call-event micro + per-case macro；reviewed claim/calculation 非零分母发布门禁；source-root 文件 SHA 重算 + release attestation；extra calculation 七维惩罚；evidence mismatch 归因；`EXPECTED_ABSTENTION` 与 observed process failure 分离 | 缺正式 reviewed cases/manifest、可核验 source files 与 release attestation；当前 run `performance_claim_allowed=false`，不得发布排名或质量提升 |
 | F semantic / 历史资产 | 代码 `COMPLETE_LOCAL`；资产 `BLOCKED_EXTERNAL_ASSETS` | reviewed label schema + claim/evidence 内容哈希；precision-first calibration + 最小 predicted-positive/TP；Hub repo ID-only、local-files-only directional-NLI scorer；小写完整 commit SHA + tokenizer/model 实载 commit metadata 精确绑定；READY readiness + actual labels/hash + calibration + scorer identity 四方绑定；deterministic→NLI→bounded LLM judge；full seed/results 已通过 attestation；historical runtime 前置 Stage 6 门禁；Stage 6 固定 historical corpus ID/path/SHA-1 + current SHA-256 并隔离 diagnostic status | 缺 reviewed semantic labels 及可信 SHA；缺授权且本地缓存完整的 directional-NLI Hub snapshot/config；缺历史 SHA-1 精确匹配、内容兼容的 Stage 6 corpus 与 reviewed attestation；正式 semantic activation 未运行 |
-| G CI / docs / observability | 当前 hardening `COMPLETE_LOCAL / PENDING_HOSTED`；上一基线 `HOSTED_GREEN` | `requirements.lock`；固定 `ruff==0.12.12`；11 个 Phase G/CI/评测核心文件的增量 lint + format-check；Ubuntu/Windows CPU-only workflow；provider-free 四 profile step；持久化 verdict；strict HTML；本轮本地 1084 tests、Phase 0 215 tests 与 CI 等价门禁已通过 | 上一基线 run `33260006502`：Ubuntu 2m01s、Windows 3m32s，两个矩阵作业成功；本轮提交后必须等待新的双平台 run 才能恢复当前 HEAD 的 `HOSTED_GREEN` |
+| G CI / docs / observability | 当前 hardening `COMPLETE_LOCAL / HOSTED_GREEN` | `requirements.lock`；固定 `ruff==0.12.12`；11 个 Phase G/CI/评测核心文件的增量 lint + format-check；Ubuntu/Windows CPU-only workflow；provider-free 四 profile step；持久化 verdict；strict HTML；本轮本地 1084 tests、Phase 0 215 tests 与 CI 等价门禁已通过 | hardening 实现提交 run `33712854541`：Ubuntu 1m57s、Windows 3m20s，两个矩阵作业成功 |
 | H M10 OCR/Table | `KEEP_M10_P2` | 3359 页、23942 chunks、194 documents 的 corpus quality gate 仍支持延期 | 只有人工复核证明 OCR/Table 是主要失败来源后才另开计划 |
 
 ### 3.1 详细计划的最终 COMPLETE 条件审计
@@ -84,18 +83,18 @@ hard-case/semantic/Stage 6 资产仍缺失，
 | Claim/Calculation Accuracy 来自 reviewed gold | `BLOCKED_EXTERNAL_ASSETS` | evaluator 和非零分母发布门禁已完成；缺 `reviewed_cases.jsonl` / `reviewed_manifest.json` |
 | 授权外部资产到位后 readiness=READY | `BLOCKED_EXTERNAL_ASSETS` | 50-row seed/results/attestation 已 READY；顶层仍因 reviewed semantic labels 缺失而 `BLOCKED` |
 | semantic scorer 只在 precision-first calibration 通过后启用 | 门禁 `COMPLETE_LOCAL`；正式激活 `BLOCKED_EXTERNAL_ASSETS` | readiness + standalone calibration + actual labels/hash + scorer config/identity 四方 fail-closed 绑定已实现；缺 reviewed labels 与授权 local model/config |
-| CI、全量测试、hard-case subset 和文档验收全通过 | 当前 hardening `COMPLETE_LOCAL / PENDING_HOSTED`；上一基线 `HOSTED_GREEN` | 本轮全仓、Phase 0、十类 balanced subset、编译、Ruff、依赖和 diff 门禁均通过；上一基线 run `33260006502` 在 Ubuntu/Windows 均成功，新 HEAD 仍需新 run |
+| CI、全量测试、hard-case subset 和文档验收全通过 | 当前 hardening `COMPLETE_LOCAL / HOSTED_GREEN` | 本轮全仓、Phase 0、十类 balanced subset、编译、Ruff、依赖和 diff 门禁均通过；hardening 实现提交 run `33712854541` 在 Ubuntu/Windows 均成功 |
 
-结论：工程实现已本地闭环，hosted 证据在推送本轮提交后重新验收；由于上表仍有 reviewed/private 资产必要条件为 `BLOCKED_EXTERNAL_ASSETS`，整轮升级必须保持非全局 COMPLETE。
+结论：工程实现已本地闭环，且 hardening 实现提交已通过 hosted 双平台验收；由于上表仍有 reviewed/private 资产必要条件为 `BLOCKED_EXTERNAL_ASSETS`，整轮升级必须保持非全局 COMPLETE。
 
 ## 4. 当前权威验收结果
 
 ### 4.1 全仓测试与静态门禁
 
-- 当前待提交分支：`codex/financial-agent-strict-plan`。本轮提交仍明确排除带人类签署身份且发布授权未单独确认的 untracked `historical-full-raw.attestation.json`。
+- 当前 PR 分支：`codex/financial-agent-strict-plan`（[PR #1](https://github.com/phaselessone/financial-report-agent/pull/1)）。本轮提交仍明确排除带人类签署身份且发布授权未单独确认的 untracked `historical-full-raw.attestation.json`。
 - 当前工作区完整 suite：`1084 passed, 1 skipped`（29.72s）。唯一 skip 是缺失真实 Stage 6 snapshot 时必须保留的 private restore gate，不能用兼容重建或 synthetic corpus 消除。
 - Phase 0 deterministic smoke：`215 passed`。strict observability：`READY`；balanced hard-case subset：PASS；four-profile contract：`SYNTHETIC_CONTRACT_ONLY`。
-- 上一冻结基线 hosted deterministic-ci：run `33260006502`，head SHA `446a316103d2c252d1582f0c2091ce23e32efe5e`，Ubuntu `success`（2m01s），Windows `success`（3m32s）。该 run 不覆盖本轮尚未推送的 hardening。
+- 当前 hardening hosted deterministic-ci：run `33712854541`，head SHA `02fdd7a8cc58fdc0d6fd6027948bdb08f85c755a`，Ubuntu `success`（1m57s），Windows `success`（3m20s）。
 - Balanced hard-case subset：10 cases，10 类各 1 条，subset SHA-256 `5ef1c2dc33de427aeba77a9bf5d564b930dea9e0e5eb07199821f836abfc5dd4`；当前重跑 PASS。
 - `uv --no-cache pip check --python .venv\Scripts\python.exe`：通过，`77 packages compatible`。使用 `--no-cache` 是因当前 sandbox 无权读写用户级 `uv` cache，与依赖一致性无关。
 - `ruff check`：通过；`ruff format --check`：`11 files already formatted`。该门禁是明确列出的 Phase G/CI/评测核心文件增量作用域，不代表全仓历史样式债已清零。
@@ -304,9 +303,9 @@ $env:SEMANTIC_LABELS_SHA256 = "<authorized-sha256>"
 - semantic activation identity 与 labels/calibration/config/model hashes 完全一致。
 - `historical-full-core` 与 `historical-full-raw` 没有混合聚合。
 - historical Stage 6 corpus 内容门禁与 reviewed attestation 均为 READY。
-- hosted CI 在 Ubuntu 与 Windows 均实际成功（已由 run `33259417431` 满足）。
+- hosted CI 在 Ubuntu 与 Windows 均实际成功（本轮 hardening 实现提交已由 run `33712854541` 满足）。
 - README 或报告中的任何性能数字都直接引用 reviewed bundle，而不是 synthetic/current-dev contract。
 
 在这些条件全部满足前，项目总状态保持 `BLOCKED_EXTERNAL_ASSETS`，不得写成全局 COMPLETE，也不得宣称 reviewed 性能提升。
 
-两个不阻塞本地合同、但仍值得后续硬化的项目是：GitHub Actions action tags 与 lock 中 wheels 尚未做不可变 SHA/hash pin；`offline` 环境变量只证明当前被测路径无需 provider 或模型下载，不是操作系统级网络防火墙。
+两个不阻塞本地合同、但仍值得后续硬化的项目是：GitHub Actions action tags 与 lock 中 wheels 尚未做不可变 SHA/hash pin，且 run `33712854541` 提示当前 action 仍声明 Node.js 20、由 runner 强制切换到 Node.js 24；`offline` 环境变量只证明当前被测路径无需 provider 或模型下载，不是操作系统级网络防火墙。
