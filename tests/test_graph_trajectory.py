@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from src.agent.config import AgentConfig
@@ -58,8 +60,24 @@ def test_every_executed_graph_node_emits_one_uniform_node_event() -> None:
         "verify_answer",
         "finalize",
     ]
+    required_fields = {
+        "step",
+        "node",
+        "action",
+        "input_summary",
+        "output_summary",
+        "status",
+        "latency_ms",
+        "tokens",
+        "error_type",
+    }
+    assert all(required_fields <= set(event) for event in events)
     assert all(event["status"] == "SUCCESS" for event in events)
     assert all(event["latency_ms"] >= 0 for event in events)
+    assert [event["step"] for event in events] == list(range(1, len(events) + 1))
+    assert all(isinstance(event["input_summary"], str) for event in events)
+    assert all(isinstance(event["output_summary"], str) for event in events)
+    assert all(event["tokens"] == event["budget_usage"]["tokens"] for event in events)
     assert len({event["event_id"] for event in events}) == len(events)
     assert events[0]["dependencies"] == []
     assert all(event["dependencies"] == [events[index - 1]["event_id"]] for index, event in enumerate(events) if index)
@@ -87,6 +105,9 @@ def test_node_wrapper_records_exception_before_reraising() -> None:
     assert event["status"] == "FAILED"
     assert event["error_type"] == "RuntimeError"
     assert event["budget_usage"]["tool_calls"] == 1
+    assert event["tokens"] == 0
+    assert json.loads(event["input_summary"])["counters"]["tool_calls"] == 2
+    assert json.loads(event["output_summary"])["counters"]["tool_calls"] == 3
     assert event["event_id"]
     assert event["dependencies"] == []
     assert event["recovery_of"] == []
@@ -106,6 +127,24 @@ def test_node_exception_exposes_partial_state_snapshot_on_the_same_error() -> No
     assert partial["total_tokens"] == 11
     assert partial["trajectory_events"][-1]["status"] == "FAILED"
     assert partial["trajectory_events"][-1]["budget_usage"]["tokens"] == 4
+    assert partial["trajectory_events"][-1]["tokens"] == 4
+
+
+def test_node_summaries_record_shape_without_copying_state_text() -> None:
+    state = {
+        "trajectory_events": [],
+        "query": "private query text",
+        "claims": [{"text": "private claim text"}],
+        "termination_reason": "private termination text",
+    }
+
+    result = trace_graph_node("shape", lambda current: current)(state)
+    event = result["trajectory_events"][-1]
+
+    assert "private query text" not in event["input_summary"]
+    assert "private claim text" not in event["output_summary"]
+    assert "private termination text" not in event["output_summary"]
+    assert json.loads(event["input_summary"])["collection_sizes"]["claims"] == 1
 
 
 @pytest.mark.parametrize("alias", ["trajectory_events", "trace_events", "trajectory", "agent_steps", "events"])

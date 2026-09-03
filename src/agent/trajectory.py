@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from collections.abc import Callable, Mapping
 from functools import wraps
+import json
 from types import MappingProxyType
 from time import perf_counter
 from typing import Any
@@ -27,6 +28,16 @@ _TRACE_ALIASES = (
 )
 _DEPENDENCY_ALIASES = ("dependencies", "depends_on", "parent_event_ids", "caused_by")
 _RECOVERY_ALIASES = ("recovery_of", "recovers", "recovered_event_ids")
+_SUMMARY_COLLECTIONS = (
+    "claims",
+    "evidence_pool",
+    "llm_calls_log",
+    "reasoning_step_results",
+    "retrieval_history",
+    "tool_calls",
+    "trajectory_events",
+)
+_SUMMARY_KEY_LIMIT = 32
 
 
 def _ids(value: Any) -> list[str]:
@@ -127,10 +138,34 @@ def _budget_delta(before: Mapping[str, int], after: Mapping[str, int]) -> dict[s
     }
 
 
+def _state_summary(state: Mapping[str, Any]) -> str:
+    """Describe state shape and counters without copying prompt or answer text."""
+
+    keys = sorted(str(key) for key in state if str(key) not in _TRACE_ALIASES)
+    visible_keys = keys[:_SUMMARY_KEY_LIMIT]
+    if len(keys) > _SUMMARY_KEY_LIMIT:
+        visible_keys.append(f"...+{len(keys) - _SUMMARY_KEY_LIMIT}")
+    collection_sizes: dict[str, int] = {}
+    for key in _SUMMARY_COLLECTIONS:
+        value = state.get(key)
+        if isinstance(value, (Mapping, list, tuple, set, frozenset)):
+            collection_sizes[key] = len(value)
+    payload = {
+        "collection_sizes": collection_sizes,
+        "counters": _snapshot(state),
+        "key_count": len(keys),
+        "keys": visible_keys,
+        "termination_reason_present": bool(state.get("termination_reason")),
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
 def _next_event(
     events: list[dict[str, Any]],
     *,
     node_name: str,
+    input_summary: str,
+    output_summary: str,
     status: str,
     latency_ms: float,
     error_type: str | None,
@@ -158,6 +193,13 @@ def _next_event(
                 recovery_of = [event["event_id"]]
                 break
     existing_ids = {str(event.get("event_id") or "") for event in events}
+    prior_node_events = [event for event in events if event.get("event_type") == "node"]
+    declared_steps = [
+        int(event["step"])
+        for event in prior_node_events
+        if isinstance(event.get("step"), int) and not isinstance(event.get("step"), bool)
+    ]
+    step = max([len(prior_node_events), *declared_steps], default=0) + 1
     next_index = len(events) + 1
     event_id = f"event-{next_index:04d}"
     while event_id in existing_ids:
@@ -166,10 +208,14 @@ def _next_event(
     return {
         "event_id": event_id,
         "event_type": "node",
+        "step": step,
         "node": node_name,
         "action": "node_execution",
+        "input_summary": input_summary,
+        "output_summary": output_summary,
         "status": status,
         "latency_ms": latency_ms,
+        "tokens": max(0, int(budget_usage.get("tokens", 0) or 0)),
         "error_type": error_type,
         "termination_reason": termination_reason,
         "budget_usage": dict(budget_usage),
@@ -207,6 +253,7 @@ def trace_graph_node(
     def traced(state: dict[str, Any]) -> dict[str, Any]:
         started = perf_counter()
         before = _snapshot(state)
+        input_summary = _state_summary(state)
         try:
             result = node(state)
         except Exception as exc:
@@ -216,6 +263,8 @@ def trace_graph_node(
                 _next_event(
                     events,
                     node_name=node_name,
+                    input_summary=input_summary,
+                    output_summary=_state_summary(state),
                     status="FAILED",
                     latency_ms=(perf_counter() - started) * 1000,
                     error_type=type(exc).__name__,
@@ -236,6 +285,8 @@ def trace_graph_node(
             _next_event(
                 events,
                 node_name=node_name,
+                input_summary=input_summary,
+                output_summary=_state_summary(target),
                 status="SUCCESS",
                 latency_ms=(perf_counter() - started) * 1000,
                 error_type=None,

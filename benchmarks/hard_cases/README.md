@@ -27,6 +27,16 @@ reviewed publication gate.
 
 Gold calculation requirements depend on status. `SUCCESS` requires operands and a result; `FAILED`, `INSUFFICIENT`, `AMBIGUOUS` and `SKIPPED` may omit them. Metrics score only applicable gold dimensions. Process metrics use only the run's own trace/prediction data, while reviewed gold metrics are emitted separately. Every rate reports `numerator`, `denominator`, `micro` and `macro`.
 
+`Unnecessary Tool Call Rate` is a call-event metric: its denominator is every
+actual tool call, and its numerator is every call whose tool type is absent
+from the case's gold `required_tools`. Consequently, any call is unnecessary
+when `required_tools` is empty. The schema specifies required tool types, not
+per-tool call counts, so repeated calls to a required tool are not classified
+as unnecessary by this metric; repeated calls to a non-required tool are
+counted once per invocation. `micro` is the primary aggregate across call
+events, `macro` is the mean of per-case rates, and repeated-call cost is also
+visible independently in `Avg Tool Calls`.
+
 `performance_claim_allowed` is true only when all of the following hold: the reviewed manifest validates; source files were recomputed under the confined root; the release attestation validates; a positive release target is explicitly supplied and met; all ten categories have positive declared quotas and meet them; every manifest source has a positive quota and meets it; every case has a prediction; and the reviewed Claim Verification Accuracy and Calculation Record Accuracy both have non-zero gold denominators. Otherwise the result remains `COVERAGE_ONLY` and `publish_gate.blocking_reasons` records why. Unexpected calculation predictions count as false in every reviewed calculation dimension. Synthetic input is always `SYNTHETIC_CONTRACT_ONLY`.
 
 The four executable profile IDs are `baseline-rag`, `agentic-rag`, `structured-agent` and `full-agent`. Runtime treatments come from `src.evaluation.profile_runtime.PROFILE_SPECS`; the compatibility table in the hard-case evaluator is derived from that registry. Atomic claim extraction and deterministic provenance verification are a non-optional graph integrity invariant (`strict_claim_provenance`), including for `structured-agent`; the `claim_verification` treatment controls enhanced verification and recovery only.

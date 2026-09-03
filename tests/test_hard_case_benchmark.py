@@ -1141,6 +1141,85 @@ def test_reviewed_tool_and_partial_gold_contracts_are_scored() -> None:
     assert row["partial_answer_gold_score"] == 1.0
 
 
+def test_unnecessary_tool_calls_treat_an_empty_gold_contract_as_all_unnecessary() -> None:
+    case = _reviewed_case(required_tools=[])
+
+    row = evaluate_case(
+        case,
+        {
+            "tool_calls": [
+                {"tool_name": "report_search"},
+                {"tool_name": "calculator"},
+            ]
+        },
+    )
+
+    assert row["unnecessary_tool_call_numerator"] == 2
+    assert row["unnecessary_tool_call_denominator"] == 2
+    assert row["unnecessary_tool_call_rate"] == 1.0
+
+
+def test_unnecessary_tool_calls_count_each_non_required_invocation() -> None:
+    case = _reviewed_case(required_tools=["report_search"])
+
+    row = evaluate_case(
+        case,
+        {
+            "tool_calls": [
+                {"tool_name": "report_search"},
+                {"tool_name": "report_search"},
+                {"tool_name": "web_search"},
+                {"tool_name": "web_search"},
+            ]
+        },
+    )
+
+    # required_tools specifies allowed tool types, not the number of calls.
+    # Both non-required invocations count; repeated required calls do not.
+    assert row["unnecessary_tool_call_numerator"] == 2
+    assert row["unnecessary_tool_call_denominator"] == 4
+    assert row["unnecessary_tool_call_rate"] == 0.5
+
+
+def test_unnecessary_tool_call_aggregate_uses_call_level_micro_rate() -> None:
+    empty_contract = _reviewed_case(
+        case_id="REV-EMPTY-TOOLS",
+        required_tools=[],
+    )
+    typed_contract = _reviewed_case(
+        case_id="REV-TYPED-TOOLS",
+        required_tools=["report_search"],
+    )
+    predictions = {
+        empty_contract["case_id"]: {
+            "tool_calls": [{"tool_name": "calculator"}],
+        },
+        typed_contract["case_id"]: {
+            "tool_calls": [
+                {"tool_name": "report_search"},
+                {"tool_name": "report_search"},
+                {"tool_name": "web_search"},
+            ],
+        },
+    }
+
+    metrics, _ = evaluate_predictions(
+        [empty_contract, typed_contract],
+        predictions,
+    )
+
+    detail = metrics["unnecessary_tool_call_rate_detail"]
+    assert detail["numerator"] == 2
+    assert detail["denominator"] == 4
+    assert detail["micro"] == 0.5
+    assert detail["macro"] == pytest.approx((1.0 + 0.3333) / 2, abs=0.0001)
+    assert metrics["Unnecessary Tool Call Rate"] == detail["micro"]
+    category_detail = metrics["category_metrics"]["derived_calculation"][
+        "contract_metrics"
+    ]["Unnecessary Tool Call Rate"]
+    assert category_detail == detail
+
+
 def test_reviewed_evaluation_materializes_gold_causal_failure_attribution() -> None:
     case = _reviewed_case(
         gold_claims=[

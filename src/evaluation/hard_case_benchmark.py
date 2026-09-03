@@ -754,9 +754,16 @@ def _tool_names(prediction: Mapping[str, Any]) -> list[str]:
 
 
 def _required_tools(case: Mapping[str, Any]) -> set[str]:
-    explicit = case.get("required_tools") or case.get("expected_tools")
+    explicit_field_present = "required_tools" in case or "expected_tools" in case
+    explicit = (
+        case.get("required_tools")
+        if "required_tools" in case
+        else case.get("expected_tools")
+    )
     if isinstance(explicit, (list, tuple, set)):
         return {str(item).strip() for item in explicit if str(item).strip()}
+    if explicit_field_present:
+        return set()
     # The checked-in synthetic fixture predates the optional required_tools
     # field.  Keep its contract useful by deriving the minimum expected action
     # from the category; reviewed benchmarks should provide the field directly.
@@ -765,6 +772,20 @@ def _required_tools(case: Mapping[str, Any]) -> set[str]:
     if case.get("category") in {"simple_factual", "numeric_disambiguation", "cross_report_comparison", "multi_hop", "rewrite_required", "misleading_top_1", "conflicting_evidence", "must_abstain", "partial_answer"}:
         return {"report_search"}
     return set()
+
+
+def _unnecessary_tool_call_counts(
+    tools: Sequence[str], required_tools: set[str]
+) -> tuple[int, int]:
+    """Return unnecessary and total actual tool-call event counts.
+
+    ``required_tools`` is a contract over tool types, not call cardinality. Each
+    actual call is therefore one denominator event, and each call whose tool
+    type is outside that contract is one numerator event. Repeated calls to an
+    allowed tool remain allowed; repeated calls to a non-required tool are
+    counted separately. An empty contract makes every actual call unnecessary.
+    """
+    return sum(tool not in required_tools for tool in tools), len(tools)
 
 
 def _required_evidence(case: Mapping[str, Any]) -> set[str]:
@@ -1221,7 +1242,12 @@ def evaluate_case(case: Mapping[str, Any], prediction: Mapping[str, Any] | None 
         if required_tools
         else 1.0
     )
-    unnecessary_tools = len([tool for tool in tools if required_tools and tool not in required_tools]) / len(tools) if tools else 0.0
+    unnecessary_tool_calls, observed_tool_calls = _unnecessary_tool_call_counts(
+        tools, required_tools
+    )
+    unnecessary_tools = (
+        unnecessary_tool_calls / observed_tool_calls if observed_tool_calls else 0.0
+    )
     forbidden_tool_calls = sum(tool in forbidden_tools for tool in tools)
     forbidden_tool_call_rate = forbidden_tool_calls / len(tools) if tools else 0.0
     recovery_required = bool(case.get("must_recover") or case.get("category") == "rewrite_required")
@@ -1270,6 +1296,8 @@ def evaluate_case(case: Mapping[str, Any], prediction: Mapping[str, Any] | None 
         "forbidden_tool_contract_satisfied": float(forbidden_tool_calls == 0),
         "forbidden_tool_call_rate": round(forbidden_tool_call_rate, 4),
         "unnecessary_tool_call_rate": round(unnecessary_tools, 4),
+        "unnecessary_tool_call_numerator": unnecessary_tool_calls,
+        "unnecessary_tool_call_denominator": observed_tool_calls,
         "llm_calls": llm_calls,
         "tool_calls": tool_calls,
         "total_tokens": tokens,
@@ -1406,6 +1434,15 @@ def evaluate_predictions(
             "macro": average,
         }
 
+    unnecessary_tool_call_detail = _rate_detail(
+        "unnecessary_tool_call_numerator",
+        "unnecessary_tool_call_denominator",
+        "unnecessary_tool_call_rate",
+    )
+    unnecessary_tool_call_rate = unnecessary_tool_call_detail["micro"]
+    if unnecessary_tool_call_rate is None:
+        unnecessary_tool_call_rate = 0.0
+
     metrics = {
         "benchmark_kind": benchmark_kind,
         "total": len(per_case),
@@ -1433,8 +1470,9 @@ def evaluate_predictions(
         "Forbidden Tool Contract Satisfaction Rate": _mean("forbidden_tool_contract_satisfied"),
         "forbidden_tool_call_rate": _mean("forbidden_tool_call_rate"),
         "Forbidden Tool Call Rate": _mean("forbidden_tool_call_rate"),
-        "unnecessary_tool_call_rate": _mean("unnecessary_tool_call_rate"),
-        "Unnecessary Tool Call Rate": _mean("unnecessary_tool_call_rate"),
+        "unnecessary_tool_call_rate": unnecessary_tool_call_rate,
+        "Unnecessary Tool Call Rate": unnecessary_tool_call_rate,
+        "unnecessary_tool_call_rate_detail": unnecessary_tool_call_detail,
         "avg_llm_calls": _mean("llm_calls"),
         "Avg LLM Calls": _mean("llm_calls"),
         "avg_tool_calls": _mean("tool_calls"),
@@ -1532,6 +1570,12 @@ def evaluate_predictions(
             "contract_metrics": {
                 "Tool Selection Recall": _average_detail(
                     "tool_selection_recall", category_rows
+                ),
+                "Unnecessary Tool Call Rate": _rate_detail(
+                    "unnecessary_tool_call_numerator",
+                    "unnecessary_tool_call_denominator",
+                    "unnecessary_tool_call_rate",
+                    category_rows,
                 ),
                 "Forbidden Tool Contract Satisfaction Rate": _average_detail(
                     "forbidden_tool_contract_satisfied", category_rows
