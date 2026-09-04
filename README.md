@@ -1,16 +1,24 @@
-# Financial Research PDF RAG / 中文金融研报 PDF 可溯源问答系统
+<p align="center">
+  <a href="#zh-cn"><strong>简体中文</strong></a>
+  &nbsp;·&nbsp;
+  <a href="#en">English</a>
+</p>
 
-面向中文金融研报 PDF 的证据驱动 RAG 系统。项目覆盖从 PDF 解析、结构化切块、Hybrid+Rerank 检索，到证据约束生成、引用绑定、拒答判断和评测归档的完整闭环。
+<a id="zh-cn"></a>
 
-This is an evidence-grounded RAG system for Chinese financial research PDFs. It focuses on structured PDF ingestion, hybrid retrieval with reranking, citation-aware answer generation, abstention, and reproducible evaluation.
+# 中文金融研报 PDF 可溯源问答系统
 
-## Overview
+<p align="right"><a href="#en">English version →</a></p>
 
-金融研报常见多栏排版、表格、图注、页眉页脚、免责声明和跨文档比较问题。普通“向量库 + LLM”流程很容易出现证据错位、引用不准或无证据硬答。本项目的目标是把研报 PDF 转成可检索、可引用、可评测、可复现的问答系统。
+面向中文金融研报 PDF 的证据驱动 RAG 系统。它将 PDF 解析、结构化切块、混合检索、证据约束生成、引用绑定、拒答判断和可复现评测串成一条可审计的工作流。
 
-核心链路：
+> 本项目关注“回答是否能被证据支持”，而不只关注答案是否看起来合理。请勿将合约测试或合成基准结果表述为真实语料质量、投资建议或业务表现证明。
 
-```text
+## 项目简介
+
+金融研报常有多栏排版、表格、图注、页眉页脚、免责声明和跨文档比较。简单的“向量库 + LLM”流程容易造成证据错位、引用不准确或无证据作答。本项目把这些材料转换为可检索、可引用、可评测的问答资产。
+
+~~~text
 PDF ingest
   -> structured pages / cleaned pages / elements
   -> table-protected chunks + optional structured facts
@@ -21,370 +29,322 @@ PDF ingest
   -> synthesize -> extract_claims -> verify_answer -> finalize
   -> calculation provenance + ENTAILED-only citations / abstain
   -> trajectories, deterministic gates, and evaluation bundles
-```
+~~~
 
-## Highlights
+## 核心能力
 
-- **结构化 PDF ingest**：基于 PyMuPDF 抽取页面块、标题、表格和正文元素，不直接把整篇 PDF 当普通文本切分。
-- **表格保护切块**：生产策略为 `table_protected`，优先保护金融研报中的表格、标题层级和数字邻近上下文。
-- **Hybrid+Rerank 检索**：组合 `BAAI/bge-m3`、FAISS、BM25、`BAAI/bge-reranker-v2-m3`，兼顾语义召回和关键词匹配。
-- **Claim-level provenance contracts**：确定性测试覆盖稳定 claim ID、类型、独立 evidence 映射和三态验证（`ENTAILED` / `CONTRADICTED` / `INSUFFICIENT`）；strict evidence gate 只允许 ENTAILED claim 的证据进入最终引用。
-- **Calculation provenance contracts**：确定性测试覆盖同比、环比、CAGR、利润率、比率、差额与百分点变化的 Decimal 计算，以及输入 evidence/fact、公式、结果、舍入与失败状态。
-- **受控 Tool Agent contracts**：工具白名单、调用记录、预算停止、重试、去重和错误 trajectory 有离线回归测试；这不等于已经证明真实语料上的回答质量。
-- **可复现评测工件**：strict eval bundle 固定 `RunIdentity`、配置/结果哈希、逐题结果和 trajectory；不同 benchmark/profile/runtime 身份不能静默合并。
+- **结构化 PDF 解析**：使用 PyMuPDF 提取页面块、标题、表格和正文元素，而不是把整篇研报视为普通文本。
+- **表格保护切块**：<code>table_protected</code> 策略保留表格、标题层级与数字附近的上下文。
+- **混合检索与重排**：组合 <code>BAAI/bge-m3</code>、FAISS、BM25 和 <code>BAAI/bge-reranker-v2-m3</code>，兼顾语义召回与关键词匹配。
+- **证据与计算溯源**：Claim、证据、计算输入、公式、舍入和结果均有可检查的契约；最终引用只接受 <code>ENTAILED</code> 的证据。
+- **受控 Agent 执行**：工具白名单、预算、重试、去重、依赖覆盖和失败轨迹均有离线回归测试。
+- **可复现评测**：<code>RunIdentity</code> 绑定配置、语料、基准、结果和轨迹，避免不同 profile、runtime 或 benchmark 的指标被静默混合。
 
-## Architecture
+## 系统架构
 
-| Layer | Main files | Responsibility |
+| 层级 | 主要位置 | 职责 |
 | --- | --- | --- |
-| Ingest | `src/ingest/*`, `run_pipeline.py` | PDF 解析、清洗、元素抽取、切块、ingest 报告 |
-| Retrieval | `src/retrieval/*`, `run_retrieval_eval.py` | Dense/BM25/Hybrid/Rerank 检索运行时和评测 |
-| Generation | `src/generation/*`, `run_answer_eval.py` | 证据选择、题型路由、LLM provider、citation、abstain |
-| Agent | `src/agent/*`, `run_agent.py` | LangGraph 编排、claim verification、calculation trace、dependency coverage、受控工具调用 |
-| Structured facts | `src/structured/*` | 指标注册表、事实标准化/查询、actual 与 forecast 隔离 |
-| Evaluation | `src/evaluation/*`, `benchmarks/hard_cases/*` | benchmark、claim/calculation/trajectory 指标、failure attribution、归档与元数据 |
-| Ops | `scripts/ragctl.sh`, `scripts/remote_ops.py`, `bootstrap/*` | 本地/远端执行入口、环境检查、SSH/SFTP 辅助 |
+| Ingest | <code>src/ingest/*</code>、<code>run_pipeline.py</code> | PDF 解析、清洗、元素抽取、切块与 ingest 报告 |
+| Retrieval | <code>src/retrieval/*</code>、<code>run_retrieval_eval.py</code> | Dense、BM25、Hybrid、Rerank 与检索评测 |
+| Generation | <code>src/generation/*</code>、<code>run_answer_eval.py</code> | 证据选择、题型路由、LLM provider、引用和拒答 |
+| Agent | <code>src/agent/*</code>、<code>run_agent.py</code> | LangGraph 编排、claim 校验、计算轨迹、依赖与受控工具 |
+| Structured facts | <code>src/structured/*</code> | 财务指标注册、标准化事实查询、actual/forecast 隔离 |
+| Evaluation | <code>src/evaluation/*</code>、<code>benchmarks/hard_cases/*</code> | 基准、指标、归档、元数据和失败归因 |
+| Operations | <code>scripts/</code>、<code>bootstrap/</code> | 命令分发、环境检查、本地/远端辅助工具 |
 
-## Repository Layout
+## 快速开始
 
-```text
-.
-├── bootstrap/                 # environment checks
-├── docs/                      # technical review, provenance, and postmortem docs
-├── scripts/                   # ragctl, remote helper, smoke scripts
-├── src/
-│   ├── ingest/                # PDF parser, cleaner, chunker, pipeline
-│   ├── retrieval/             # embedding, FAISS, BM25, hybrid retriever, reranker
-│   ├── generation/            # answerer, provider, prompt, citation, abstain
-│   ├── agent/                 # graph nodes, claims, tools, calculations, dependencies
-│   ├── structured/            # normalized financial facts and metric registry
-│   └── evaluation/            # benchmark assets, eval metrics, metadata, archive policy
-├── benchmarks/hard_cases/     # 100 synthetic, deterministic contract cases
-├── tests/                     # regression tests for routing, eval, cache, metadata
-├── run_pipeline.py            # PDF ingest entrypoint
-├── run_prepare_benchmark.py   # benchmark materialization helper
-├── run_retrieval_eval.py      # retrieval evaluation entrypoint
-└── run_answer_eval.py         # answer generation/evaluation entrypoint
-```
+### 1. 创建环境
 
-Large local data and generated artifacts are intentionally excluded from GitHub: `pdf/`, `data/`, `outputs/`, `artifacts/`, `models/`, remote sync folders, caches, backups, and zip/tgz packages.
+请先按 [uv 文档](https://docs.astral.sh/uv/) 安装 <code>uv</code>。<code>requirements.lock</code> 是 CI 与可复现验收使用的精确依赖闭包；<code>requirements.txt</code> 和 <code>requirements-dev.txt</code> 是维护依赖时的输入。
 
-The clean-checkout test suite keeps one minimal financial-business record at
-[`tests/fixtures/controlled_financial_business_case.json`](tests/fixtures/controlled_financial_business_case.json).
-It uses a fictional issuer and synthetic annual-revenue statement to exercise
-structured lookup, provenance, and citation behavior without `data/`, private
-PDFs, or raw report text. It is a deterministic public-safe contract fixture,
-not a real-report source record or reviewed benchmark evidence.
-
-## Quick Start
-
-### 1. Create environment
-
-推荐使用 [uv](https://docs.astral.sh/uv/) 创建环境并安装依赖。`requirements.lock`
-是 CI 与可复现验收使用的精确 runtime/test 闭包；`requirements.txt` 和
-`requirements-dev.txt` 是维护依赖时的开发输入，不是验收安装入口。
-
-Linux (the locked CI target) and supported macOS installations:
-
-```bash
+~~~bash
+# Linux (CI target); macOS is best-effort only
 uv venv .venv
 uv pip install --python .venv/bin/python -r requirements.lock
-```
+~~~
 
-The current-worktree workflow targets Ubuntu and Windows. Before deterministic-ci
-run [`33259417431`](https://github.com/phaselessone/financial-report-agent/actions/runs/33259417431),
-no successful hosted GitHub Actions run has been supplied as acceptance evidence;
-that push run now supplies green Ubuntu and Windows evidence for commit
-`48945449f0f36ae3c0ffb6590ab92f8087b5769e`. The current
-`faiss-cpu` wheel requires at least macOS 14 on Apple Silicon and macOS 15 on
-Intel; older macOS versions are not part of the supported lock contract.
-
-Windows PowerShell:
-
-```powershell
+~~~powershell
+# Windows PowerShell
 uv venv .venv
 uv pip install --python .venv\Scripts\python.exe -r requirements.lock
-```
+~~~
 
-### 2. Configure runtime
+Ubuntu 和 Windows 是受支持且由 CI 覆盖的平台。macOS 不是当前受支持或 CI 验收的平台；仅可在 Apple Silicon 的 macOS 14+ 或 Intel Mac 的 macOS 15+ 上按上述命令 best-effort 尝试安装，以满足当前 <code>faiss-cpu</code> wheel 的要求。
 
-Copy `.env.example` to a local ignored environment file and fill private values outside version control:
+### 2. 配置运行时
 
-```bash
+将示例配置复制到被忽略的本地文件中，并将密钥保留在版本控制之外。
+
+~~~bash
 cp .env.example .env.local
-```
+~~~
 
-The repository does not include API keys, private SSH keys, PDFs, indexes, models, or generated evaluation outputs.
+~~~powershell
+Copy-Item .env.example .env.local
+~~~
 
-`.env`, `.env.deepseek`, `.env.local` and `.env.runtime` are loaded automatically (lowest to highest priority, later files override earlier ones) by both `scripts/use_env.sh` and the Python entrypoints via `src/utils/env.py`.
+<samp>scripts/use_env.sh</samp> 与 Python 入口按 <code>.env</code> → <code>.env.deepseek</code> → <code>.env.local</code> → <code>.env.runtime</code> 的顺序加载配置，后加载的值会覆盖前面的值。
 
-### 3. Run pipeline
+### 3. 运行管线
 
-```bash
+~~~bash
 bash scripts/ragctl.sh doctor
 bash scripts/ragctl.sh pipeline --input-dir pdf --output-dir data
 bash scripts/ragctl.sh prepare-benchmark
 bash scripts/ragctl.sh retrieval-eval
 bash scripts/ragctl.sh answer-eval-dev
-```
+~~~
 
-Historical full benchmark commands are separated on purpose:
+Windows 上可在 Git Bash 中运行上述命令，或直接调用 Python 入口：
 
-```bash
-bash scripts/ragctl.sh answer-eval-full --model-revision <pinned-provider-revision>
-bash scripts/ragctl.sh answer-eval-full-raw --model-revision <pinned-provider-revision>
-```
-
-Do not merge these two result sets when reporting metrics.
-
-On Windows, `bash scripts/ragctl.sh ...` requires Git Bash. You can also run the Python entrypoints directly with the venv interpreter, for example:
-
-```powershell
+~~~powershell
 .\.venv\Scripts\python.exe run_pipeline.py --input-dir pdf --output-dir data
 .\.venv\Scripts\python.exe run_prepare_benchmark.py
 .\.venv\Scripts\python.exe run_retrieval_eval.py
 .\.venv\Scripts\python.exe run_answer_eval.py
-```
+~~~
 
-## Remote And Artifact Notes
+历史完整评测必须显式提供不可变的模型版本：
 
-- Historical test counts are not readiness evidence. In the audited local workspace,
-  the 50-row full seed, historical results, and their attestation make
-  `check-full-seed` READY. Top-level Phase 0 readiness remains `BLOCKED` because
-  reviewed semantic labels are absent; historical replay is separately `BLOCKED`
-  because the hash-pinned Stage 6 chunks and reviewed corpus attestation are absent.
-  Public clean checkouts intentionally omit these reviewed/private assets.
-- The canonical remote helper is `scripts/remote_ops.py`, but large recursive artifact transfers should prefer a single remote archive plus checksum verification.
-- Evidence packages and generated outputs are intentionally kept out of the public repository boundary.
-- The public deterministic suite explicitly excludes `tests/test_full_seed_restore.py`; running that private-asset gate without restored reviewed assets must fail rather than skip or fabricate substitutes.
-- Local `.env.*`, `.ssh/`, model caches, PDFs, generated indexes, outputs, artifacts, and backup folders must remain untracked.
+~~~bash
+bash scripts/ragctl.sh answer-eval-full --model-revision <pinned-provider-revision>
+bash scripts/ragctl.sh answer-eval-full-raw --model-revision <pinned-provider-revision>
+~~~
 
-## Provenance and Controlled Agent Flow
+两类历史结果属于不同 profile，报告时不得合并。
+<code>answer-eval-full</code> 对应 <code>historical-full-core</code>，而 <code>answer-eval-full-raw</code> 对应 <code>historical-full-raw</code>。
 
-The deterministic contract suite exercises this single ReasoningPlan route:
+## 评测、可复现性与已知限制
 
-```text
-analyze query
-  -> build_reasoning_plan
-  -> plan_next_step -> execute_step -> observe_step_result -> repeat
-  -> dependency_gate
-  -> optional grade_evidence / rewrite_query recovery
-  -> synthesize -> extract_claims -> verify_answer -> finalize
-```
+| 项目 | 含义 |
+| --- | --- |
+| <code>current-dev</code> | 当前开发语料的可复现评测，不等同于历史全量结果。 |
+| <code>historical-full-core</code> / <code>historical-full-raw</code> | 不可互换的历史 profile；必须固定 <code>--model-revision</code>，且不得合并指标。 |
+| Full benchmark | 需要私有 seed、历史结果、review attestation、Stage 6 语料与 corpus attestation；缺任何一项均应 <code>BLOCKED</code>。 |
+| Hard cases | 当前 100 例是合成、确定性的合约夹具；它证明执行和完整性契约，不证明真实金融问答质量。 |
+| Four profiles | <code>baseline-rag</code>、<code>agentic-rag</code>、<code>structured-agent</code>、<code>full-agent</code> 的合约运行不构成质量排名或性能提升结论。 |
+| Semantic calibration | 需要经审核标签、授权 scorer identity 与 readiness gate；相似度本身不能证明 <code>ENTAILED</code>。 |
 
-`execute_step` is the controlled seam for structured lookup, retrieval search and
-provenance-aware calculation. Every query receives a `ReasoningPlan`; single-hop
-and multi-hop questions share the same plan/execute/observe/dependency path.
-Contract tests cover stable step/call identities, dependency ordering,
-deduplication, budget exhaustion, retry limits and no-new-information
-termination.
+ReasoningPlan、claim 级溯源、Decimal 计算溯源和严格 evidence gate 提供的是过程与证据完整性保证，不是对真实语料语义质量的独立证明。缺少经审核的 Stage 6 语料及 attestation、经审核的 hard-case 资产，或经审核的语义标注时，对应结论必须保持 <code>BLOCKED</code>。
 
-The strict trace contract carries `claim_id`, text, claim type, `is_core`, source-step IDs, claim-specific `evidence_ids`, optional `calculation_id`, parent claim IDs and verification details. The legacy `supported` field is compatibility output derived from `verification.status == "ENTAILED"`; it is not an independent verdict. The deterministic verifier tests fail closed on numeric entity, metric, period, value, unit and actual/forecast type. These are process/integrity guarantees, not reviewed semantic-accuracy results.
+## CI 与本地验证
 
-The evidence-integrity gate requires each published derived claim to reference a successful `CalculationRecord` with evidence/fact input provenance. Deterministic tests cover the calculator operation, ordered inputs, formula, unit, rounding, result and explicit error status for the currently supported operations; they do not establish that upstream source facts are correct.
+以下命令不下载模型、不调用 provider，也不需要私有 PDF。<code>make</code> 命令需要具备 Make 和 Bash 的环境；Windows 上请在 Git Bash、WSL 或等效环境中运行，或直接调用相应 Python 脚本：
 
-Single-hop and multi-hop contract cases use explicit reasoning steps and dependencies. The deterministic coverage gate distinguishes complete, partial and abstain outcomes. Reviewed end-to-end multi-hop accuracy remains unverified.
-
-## Deterministic Gates and Reproduction
-
-All commands below are local/offline with respect to models and providers. They do not load embeddings, download models, call an API, or require a private PDF. Use the repository virtual environment on Windows:
-
-```powershell
-# Capture commit, dependency/config hashes, non-secret model configuration, and commands.
+~~~powershell
 .\.venv\Scripts\python.exe scripts\phase0_gate.py baseline
-
-# Run the deterministic Phase 0 smoke groups.
 make p0-smoke
-
-# Validate the 10-category balanced hard-case contract subset.
 make hard-case-smoke
-
-# Run one real graph execution through a strict READY bundle and HTML review page.
 make strict-observability-smoke
+make four-profile-contract
+~~~
 
-# Rebuild the non-publishable current-dev trace from current-local real corpus assets.
-make current-dev-trace
+GitHub Actions 在 Ubuntu 和 Windows 上使用 Python 3.12、锁定依赖和 CPU-only PyTorch；它运行编译、Ruff、公开的确定性测试、证据完整性检查、hard-case 子集、四 profile 合约及 Phase 0 smoke。公开 CI 仅使用合成安全夹具，不下载模型，也不使用私有 PDF、密钥或评测资产。详见 [CI workflow](.github/workflows/ci.yml)。
 
-# Scan existing ingest JSONL to decide whether M10 OCR/table work should be promoted.
-make corpus-quality-gate
-```
+## 数据、隐私与安全边界
 
-`scripts/phase0_gate.py check-full-seed` is intentionally strict. Full regression requires both external artifacts—`data/eval_set/answer_eval_seed_full.jsonl` and `artifacts/remote_20260401/outputs_reports/answer_eval_results_full.jsonl`—plus `benchmarks/full/historical-full-raw.attestation.json`. The attestation preserves the historical JSONL files byte-for-byte while binding their pinned SHA-256 values to the reviewed restoration report, provenance commit, custodian, review batch/date, and canonical `historical-full-raw` profile. Explicit `FULL_SEED_SHA256` / `FULL_RESULTS_SHA256` values remain supported and must agree with the attestation when both are supplied. The shipped 48-row current seed is not a substitute. In a clone without the ignored external artifacts, run deterministic smoke or explicitly ignore `tests/test_full_seed_restore.py`; do not delete or weaken the full-seed assertions.
+- <code>pdf/</code>、<code>data/</code>、<code>models/</code>、<code>outputs/</code>、<code>artifacts/</code>、缓存、备份和 <code>.env.*</code> 是本地或私有状态，不得提交。
+- 公共 clean checkout 只使用虚构发行人与合成财务记录的 [受控夹具](tests/fixtures/controlled_financial_business_case.json)；它不是研报原文，也不是人工审核的质量证据。
+- 系统不提供登录、多租户、账单、实时市场数据或自动交易；其输出不应作为真实语料质量的证据、投资建议或业务表现的证明。
+- OCR 或跨页表格工作应在代表性语料通过 [corpus-quality gate](docs/m10_ocr_table_quality_gate.md) 后再提升优先级。
 
-Seed identity is not corpus identity. Before replaying `historical-full-*`, restore
-the reviewed corpus sidecar at
-`benchmarks/full/historical-stage6-corpus.attestation.json` and run the
-content-level gate:
+## 项目结构
 
-```powershell
-.\.venv\Scripts\python.exe scripts\historical_full_evidence_gate.py `
-  --chunks-path tmp_stage6_data\chunks\chunks.jsonl
-```
+~~~text
+.
+├── bootstrap/                 # environment checks
+├── docs/                      # technical, provenance, and postmortem documentation
+├── scripts/                   # dispatchers, gates, and operational helpers
+├── src/
+│   ├── ingest/                # parsing, cleaning, chunking, pipeline
+│   ├── retrieval/             # embedding, FAISS, BM25, hybrid retrieval, reranking
+│   ├── generation/            # answer generation, citations, abstention
+│   ├── agent/                 # graph, claims, tools, calculations, dependencies
+│   ├── structured/            # normalized financial facts
+│   └── evaluation/            # benchmarks, metrics, metadata, archive policy
+├── benchmarks/                # public-safe contract fixtures and schemas
+├── tests/                     # regression and contract tests
+└── run_*.py                   # runnable entrypoints
+~~~
 
-The required shape is documented by
-`benchmarks/full/historical-stage6-corpus.attestation.schema.json`. The sidecar
-must identify the historical release as `corpus:4ff7ba48fd38`, bind the canonical
-path to legacy whole-file SHA-1
-`4ff7ba48fd38a4400e581fac32c43c4217de1ece` and a freshly computed SHA-256,
-and record count, source owner/reference/acquisition time, positive review
-identity, and the exact seed/results hashes. The legacy SHA-1 is an identity
-anchor recovered from the historical run metadata, not a security signature.
-The gate rejects alternate paths, mutable identities, invalid review timestamps,
-and unknown sidecar fields before it can report formal readiness. It then requires exact
-gold IDs and checks
-document, page, filename, and normalized historical snippet content. Historical
-results expose text anchors for 42 of the 54 unique gold chunks; the remaining
-12 reviewed badcase chunks are reported separately as
-`ATTESTED_UNANCHORED` and can be accepted only after the seed attestation is
-validated. They are never described as content-verified. An ID-only rebuild is
-not acceptable: chunk ordinals can stay stable while their text shifts. Missing,
-unattested, unpinned, or content-incompatible Stage 6 data returns
-`BLOCKED`/exit code 2. `STAGE6_CHUNKS_SHA256` or
-`--expected-chunks-sha256` may pin an audit-only probe, but cannot make the formal
-gate READY without the reviewed sidecar. A content-compatible probe is reported
-as `DIAGNOSTIC_CONTENT_COMPATIBLE` / `DIAGNOSTIC_ONLY` and still exits with code 2.
+## 延伸阅读
 
-`run_answer_eval.py` now invokes this formal gate automatically for
-`historical-full-core` and `historical-full-raw` before it reserves a run
-directory, reads the candidate corpus, builds indexes, or calls a model. These
-profiles also require an explicit immutable `--model-revision`; empty,
-`default`, `latest`, `unknown`, and `unversioned` identities are rejected.
+- [技术概览与环境配置](docs/project_technical_overview_and_setup.md)
+- [完整基准溯源说明](docs/full_benchmark_provenance.md)
+- [可观测性演示](docs/observability_demo.md)
+- [OCR / 表格质量门禁](docs/m10_ocr_table_quality_gate.md)
+- [Hard-case 合约](benchmarks/hard_cases/README.md)
 
-Benchmark reports use three non-interchangeable profiles: `current-dev`,
-`historical-full-core`, and `historical-full-raw`. The legacy `historical-full`
-label is normalized to `historical-full-raw`; metrics from different profiles
-must not be merged. Run `scripts/phase0_gate.py readiness` before claiming a
-full benchmark or semantic calibration is ready. It writes
-`outputs/phase0/readiness.json` and returns `BLOCKED`/exit code 2 when the
-reviewed full seed, historical results, their attestation, or reviewed semantic labels are absent
-or invalid. `SEMANTIC_LABELS_SHA256` remains mandatory; labels must cover at
-least 20 reviewed examples with both entailed and non-entailed classes, bind a
-single directional-NLI scorer identity, and pass the precision-first calibration
-constraint with at least five predicted positives and five true positives.
-Every reviewed row must bind both claim and evidence content through inline text
-or SHA-256, use a timezone-bearing review timestamp, and require the scorer
-revision to be a lowercase full 40-character Git commit SHA. The scorer model
-must be a Hugging Face Hub repo ID, and both loaded tokenizer and model metadata
-must resolve to that exact commit; local model directories are rejected. It
-never substitutes the 48-row current seed or treats an observed hash as a
-trusted expected hash; full-asset hashes come from the reviewed sidecar.
+---
 
-When readiness is `READY`, a reviewed four-profile run may enable the calibrated
-directional-NLI layer only by supplying all four inputs:
-`--semantic-calibration-report <readiness-or-calibration.json>`,
-`--semantic-scorer-config <authorized-runtime-config.json>`,
-`--semantic-labels-path <reviewed-labels.jsonl>`, and
-`--readiness-report <ready-readiness.json>`. The config contract is documented
-under `benchmarks/semantic/`. Before loading a model, the CLI hashes and parses
-the actual labels, requires the top-level readiness report to be `READY`, and
-cross-checks the labels SHA/path, scorer identity, threshold, calibration
-identity, and runtime config. Only then does it load the exact cached model
-revision (`local_files_only=true`, `trust_remote_code=false`). A partial set of
-inputs, synthetic cases, failed calibration/precision/coverage, or a missing
-cached revision stops the matrix before any profile executes.
+<a id="en"></a>
 
-For completed agent runs, validate the strict bundle and its corpus chunks:
+# Financial Research PDF RAG
 
-```powershell
-.\.venv\Scripts\python.exe scripts\regenerate_dev_trace.py `
-  --output-root outputs
+<p align="right"><a href="#zh-cn">简体中文版 →</a></p>
 
-.\.venv\Scripts\python.exe scripts\evidence_integrity_gate.py `
-  --bundle-path outputs\reports\agent_eval_bundle_dev.json `
-  --chunks-path data\chunks\chunks.jsonl
-```
+An evidence-grounded RAG system for Chinese financial-research PDFs. It connects PDF parsing, structured chunking, hybrid retrieval, evidence-constrained generation, citation binding, abstention, and reproducible evaluation in one auditable workflow.
 
-The regeneration command selects one unambiguous actual-FY net-profit/revenue
-pair from `data/structured/facts.duckdb`, resolves its provenance in the real
-`chunks.jsonl`, and executes the production graph through deterministic
-`net_margin`. It binds chunks, facts and aliases in one corpus manifest and
-does not overwrite the legacy `agent_traces_dev.jsonl`. The resulting bundle
-is labelled `REAL_CORPUS_DEV_CONTRACT_ONLY`, `publishable=false`: it proves the
-current code can close a real-asset evidence chain, but it is not reviewed
-answer-quality evidence.
+> The project is designed to show whether an answer is supported by evidence, not merely whether it sounds plausible. Do not present contract-test or synthetic-benchmark results as real-corpus quality evidence, investment advice, or business-performance proof.
 
-The gate verifies bundle/trajectory RunIdentity equality, claim IDs and states,
-evidence/citation document-page metadata, successful calculation provenance,
-and final-answer references. Any mismatch returns `BLOCKED`/exit code 2. A raw
-`--trace-path` can still be checked for provenance, but it has no immutable
-bundle identity and is not evidence of a comparable evaluation run.
+## Overview
 
-To inspect one completed agent run locally, first produce the strict bundle with
-`run_agent_eval.py --mode agentic`, then render one trajectory as standalone
-HTML:
+Financial research PDFs frequently contain multi-column layouts, tables, captions, headers, footers, disclaimers, and cross-document comparisons. A simple “vector database + LLM” pipeline can misalign evidence, produce inaccurate citations, or answer without support. This project turns those documents into retrievable, citable, and evaluable assets.
 
-```powershell
-.\.venv\Scripts\python.exe scripts/observability_demo.py `
-  --bundle-path outputs\reports\agent_eval_bundle_dev.json `
-  --chunks-path data\chunks\chunks.jsonl `
-  --output outputs\observability\agent_trace_demo.html
-```
+~~~text
+PDF ingest
+  -> structured pages / cleaned pages / elements
+  -> table-protected chunks + optional structured facts
+  -> Dense + BM25 hybrid retrieval -> rerank
+  -> analyze_query -> build_reasoning_plan (ReasoningPlan)
+  -> plan_next_step -> execute_step (LOOKUP / SEARCH / CALCULATE)
+  -> observe_step_result -> dependency_gate
+  -> synthesize -> extract_claims -> verify_answer -> finalize
+  -> calculation provenance + ENTAILED-only citations / abstain
+  -> trajectories, deterministic gates, and evaluation bundles
+~~~
 
-Pass `--question-id` to select a specific row. The page is a read-only review
-surface for question/answer, claim status, ENTAILED-only citations, calculations,
-reasoning/tool/dependency steps, failure attribution, tokens/latency and the
-exact RunIdentity. A legacy `--trace-path` is visibly labelled `BLOCKED` and
-returns exit code 2; it is never presented as a passing strict run.
+## Highlights
 
-For a provider-free end-to-end contract check, run
-`scripts/strict_observability_smoke.py`. It executes the real graph with a
-deterministic local runtime/answerer, writes the five-file bundle under
-`outputs/strict_observability_smoke/eval/<run_id>/`, persists a READY integrity
-verdict, writes a movable bundle reference, and renders the HTML page. Every
-artifact is permanently marked `SYNTHETIC_CONTRACT_ONLY`, `publishable=false`;
-it proves the trace/evidence plumbing only and cannot support a quality or
-performance claim.
+- **Structured PDF ingestion** — PyMuPDF extracts page blocks, headings, tables, and body elements instead of treating a report as undifferentiated text.
+- **Table-protected chunking** — The <code>table_protected</code> strategy preserves tables, heading hierarchy, and numeric context.
+- **Hybrid retrieval and reranking** — <code>BAAI/bge-m3</code>, FAISS, BM25, and <code>BAAI/bge-reranker-v2-m3</code> combine semantic recall with lexical matching.
+- **Evidence and calculation provenance** — Claims, evidence, calculation inputs, formulas, rounding, and results have inspectable contracts; final citations admit only <code>ENTAILED</code> evidence.
+- **Controlled agent execution** — Tool allowlists, budgets, retries, deduplication, dependency coverage, and failure trajectories are covered by offline regression tests.
+- **Reproducible evaluation** — <code>RunIdentity</code> binds configuration, corpus, benchmark, results, and trajectories so metrics from incompatible profiles, runtimes, or benchmarks cannot be silently combined.
 
-The current-worktree hard-case suite is a **synthetic contract fixture**, not a human-reviewed financial benchmark. It has exactly 100 cases: ten per category across factual, numerical disambiguation, comparison, calculation, multi-hop, rewrite, misleading retrieval, conflict, abstention, and partial-answer behavior. The executable profiles are `baseline-rag`, `agentic-rag`, `structured-agent`, and `full-agent`, with treatments derived from the single `PROFILE_SPECS` runtime registry. **BLOCKED:** no reviewed hard-case cases/manifest or identity-compatible reviewed four-profile result set is available, so no profile ranking or improvement claim is valid. The restored historical full seed/results/attestation are a separate local evidence set and do not satisfy the reviewed four-profile benchmark contract. The reviewed row/manifest schemas and publication gate are documented in [`benchmarks/hard_cases/README.md`](benchmarks/hard_cases/README.md).
+## Architecture
 
-To prove that all four execution paths and their independent bundles remain runnable without a provider, use `make four-profile-contract` (or the equivalent `run_profile_ablation.py` command in the Makefile). This mode requires all three explicit flags `--allow-synthetic-contract --contract-oracle --offline-contract`, reads only retrieved synthetic evidence, and records `offline-deterministic`, `external_network=false`, and `model_downloads=false` in the shared RunIdentity context. The three graph-backed bundles must have a `READY` evidence-integrity verdict; baseline integrity is explicitly `NOT_APPLICABLE` because baseline intentionally has no verified-claim layer. The matrix is always `SYNTHETIC_CONTRACT_ONLY`, `performance_claim_allowed=false`, regardless of its scores.
+| Layer | Main locations | Responsibility |
+| --- | --- | --- |
+| Ingest | <code>src/ingest/*</code>, <code>run_pipeline.py</code> | PDF parsing, cleaning, element extraction, chunking, and ingest reports |
+| Retrieval | <code>src/retrieval/*</code>, <code>run_retrieval_eval.py</code> | Dense, BM25, hybrid, rerank, and retrieval evaluation |
+| Generation | <code>src/generation/*</code>, <code>run_answer_eval.py</code> | Evidence selection, routing, LLM providers, citations, and abstention |
+| Agent | <code>src/agent/*</code>, <code>run_agent.py</code> | LangGraph orchestration, claim verification, calculation traces, dependencies, and controlled tools |
+| Structured facts | <code>src/structured/*</code> | Financial metric registry, normalized fact access, and actual/forecast separation |
+| Evaluation | <code>src/evaluation/*</code>, <code>benchmarks/hard_cases/*</code> | Benchmarks, metrics, archives, metadata, and failure attribution |
+| Operations | <code>scripts/</code>, <code>bootstrap/</code> | Command dispatch, environment checks, and local/remote helpers |
 
-This 100-case matrix proves entrypoint execution, bundle persistence, identity
-comparability, and integrity contracts only. It does not prove that every benchmark
-category activates its named treatment: the current `derived_calculation` and
-`multi_hop` contract rows execute through `SEARCH` with zero persisted calculations.
-Treatment activation is covered separately by `tests/test_profile_runtime.py`;
-reviewed quality conclusions still require reviewed cases and gold labels.
+## Quick Start
 
-A formal reviewed run uses `run_profile_ablation.py --cases-path <reviewed_cases.jsonl> --reviewed-manifest-path <reviewed_manifest.json> --reviewed-source-root <reviewed_source_root> --reviewed-target-count <release_target> --chunks-path <shared_corpus_chunks.jsonl> --facts-path <facts.duckdb> --company-aliases-path <company_aliases.json> --llm-provider deepseek --llm-model <model> --llm-model-revision <pinned-revision> --output-root outputs/profile_ablation`. Add all four semantic inputs above only after their reviewed readiness gate is `READY`. All four profiles retrieve from that same shared corpus; reviewed gold evidence is evaluator-only and is never injected into search. Before model loading, every manifest source path is confined under the explicit root and its file SHA-256 is recomputed; the formal manifest also requires a timezone-bearing human release attestation. Self-reported source-verification state is rejected. The manifest hashes, provenance and quotas are recomputed; an omitted target, category/source shortfall, missing prediction, source/release verification failure, or zero reviewed claim/calculation gold denominator keeps the result `COVERAGE_ONLY`. Synthetic execution requires explicit `--allow-synthetic-contract --cases-path benchmarks/hard_cases/cases.jsonl` and remains `SYNTHETIC_CONTRACT_ONLY`; using benchmark evidence as a contract oracle additionally requires `--contract-oracle` and is permanently non-publishable.
+### 1. Create an environment
 
-Every graph-backed profile, including `structured-agent`, always performs atomic claim extraction and deterministic provenance verification before publishing a non-abstained answer. This is the `strict_claim_provenance` integrity invariant, not an ablation treatment. The `claim_verification` treatment controls enhanced verification, optional calibrated semantic/LLM judging, and verification-driven recovery; disabling it cannot bypass the deterministic claim gate. Each graph profile writes one complete trajectory row per case and must persist a bundle-bound `READY` evidence-integrity verdict before comparison.
+Install <code>uv</code> first from the [uv documentation](https://docs.astral.sh/uv/). <code>requirements.lock</code> is the exact dependency closure used by CI and reproducibility acceptance; <code>requirements.txt</code> and <code>requirements-dev.txt</code> are maintenance inputs.
 
-The GitHub workflow in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) defines clean Python 3.12 jobs for Ubuntu and Windows. It installs the exact `requirements.lock` closure through `uv`, forces the official CPU-only PyTorch backend, runs `uv pip check`, and only then enables offline flags. The workflow subsequently runs compilation; pinned Ruff lint and format checks over the explicitly maintained CI/evaluation surface in [`ruff.toml`](ruff.toml); explicit RunIdentity/profile-mismatch and evidence-integrity gates; the full deterministic suite excluding the private full-seed test; the balanced hard-case subset; and Phase 0 smoke. The Ruff scope is intentionally incremental because legacy modules still carry pre-existing style debt; expanding it is a separate, reviewable cleanup rather than an implicit mass rewrite. The job has no GPU and uses only the checked-in public-safe synthetic business fixture, not private fixtures, PDF corpora, keys, or model downloads.
+~~~bash
+# Linux (CI target); macOS is best-effort only
+uv venv .venv
+uv pip install --python .venv/bin/python -r requirements.lock
+~~~
 
-A local 263-file clean-checkout simulation containing neither `data/` nor the human
-attestation file passed compilation, Ruff, `uv pip check`, 59 RunIdentity/evaluation
-tests, 31 evidence/Phase-G tests, the 1009-test public suite, strict observability
-(`READY`), the balanced hard-case subset, the four-profile synthetic contract, and
-Phase 0 smoke (`200 passed`). This remains useful local reproducibility evidence;
-hosted run `33259417431` subsequently passed the same contract on both Ubuntu and
-Windows. The run emitted only the GitHub runner's Node.js 20 action-deprecation
-notice, not a test or gate failure.
+~~~powershell
+# Windows PowerShell
+uv venv .venv
+uv pip install --python .venv\Scripts\python.exe -r requirements.lock
+~~~
 
-The provider-free four-profile job also avoids ignored `data/`: in explicit
-`--offline-contract --contract-oracle` mode, the runner materializes one
-public-safe synthetic structured fact plus aliases under its `--output-root`.
-Those exact generated paths and hashes enter the FactStore corpus manifest and
-RunIdentity. Reviewed and normal synthetic runs still require explicit corpus
-assets and never fall back to this non-publishable seam fixture.
+Ubuntu and Windows are the supported, CI-covered platforms. macOS is not currently a supported or CI-acceptance platform; it may only be installed on a best-effort basis with the commands above on macOS 14+ for Apple Silicon or macOS 15+ for Intel Macs, as required by the current <code>faiss-cpu</code> wheel.
 
-## Evaluation Scope and Limitations
+### 2. Configure runtime
 
-- No performance improvement is claimed here. The synthetic hard-case fixture checks contracts; quality claims require a separately reviewed corpus and gold benchmark run.
-- **BLOCKED:** the restored full seed/results/attestation make the local seed-identity gate READY, but historical comparison still lacks the hash-pinned Stage 6 chunks and reviewed corpus attestation. Reviewed four-profile performance and precision-first semantic calibration separately remain blocked by reviewed hard-case assets, semantic labels, and an authorized identity-compatible local scorer configuration.
-- Claim Support and Calculation metrics are process/evidence checks unless paired with externally reviewed labels. A successful calculation trace does not itself establish that the source fact was extracted correctly.
-- Semantic/LLM judge modules are optional candidates after deterministic checks, not default proof of entailment. Similarity alone cannot establish `ENTAILED`; reviewed calibration remains `BLOCKED`, and malformed judge output must fail closed.
-- Structured facts currently cover a deliberately limited metric set and isolate actual versus forecast values. Missing facts must fall back to evidence search or abstain rather than invent a value.
-- The CI path uses deterministic/fake-provider compatible tests only. Full answer evaluation still needs external benchmark assets and, where applicable, locally cached models.
-- M10 OCR/table work remains P2. Use [the corpus-quality gate](docs/m10_ocr_table_quality_gate.md) on a representative ingest output before promoting it; its ratios are triage signals, not OCR-quality proof.
+Copy the example configuration into an ignored local file and keep secrets outside version control.
 
-## Current Follow-up Scope
+~~~bash
+cp .env.example .env.local
+~~~
 
-- Expand structured coverage only through the metric registry and regression cases, keeping actual and forecast data distinct.
-- Calibrate semantic verification thresholds from reviewed labels before treating semantic scores as a quality claim.
-- The lightweight observability demo renders only a validated strict bundle as `READY`; legacy JSONL remains inspectable only as `BLOCKED`. It deliberately excludes login, multi-tenancy, billing, real-time market data, and automatic trading.
-- Promote OCR/cross-page-table work only when the corpus-quality gate and reviewed examples show it is the primary bottleneck.
+~~~powershell
+Copy-Item .env.example .env.local
+~~~
 
-## English Summary
+<samp>scripts/use_env.sh</samp> and the Python entrypoints load <code>.env</code> → <code>.env.deepseek</code> → <code>.env.local</code> → <code>.env.runtime</code>; later files override earlier ones.
 
-This repository implements a reproducible RAG pipeline for Chinese financial research PDFs. Unlike a minimal vector database demo, it includes structured PDF parsing, table-aware chunking, hybrid retrieval, reranking, evidence-constrained answer generation, citation construction, support validation, abstention, and benchmark-driven evaluation. The first GitHub release intentionally excludes raw PDFs, generated artifacts, model caches, secrets, and remote synchronization outputs.
+### 3. Run the pipeline
+
+~~~bash
+bash scripts/ragctl.sh doctor
+bash scripts/ragctl.sh pipeline --input-dir pdf --output-dir data
+bash scripts/ragctl.sh prepare-benchmark
+bash scripts/ragctl.sh retrieval-eval
+bash scripts/ragctl.sh answer-eval-dev
+~~~
+
+On Windows, run the commands above in Git Bash or invoke the Python entrypoints directly:
+
+~~~powershell
+.\.venv\Scripts\python.exe run_pipeline.py --input-dir pdf --output-dir data
+.\.venv\Scripts\python.exe run_prepare_benchmark.py
+.\.venv\Scripts\python.exe run_retrieval_eval.py
+.\.venv\Scripts\python.exe run_answer_eval.py
+~~~
+
+Historical full evaluation requires an explicit immutable model revision:
+
+~~~bash
+bash scripts/ragctl.sh answer-eval-full --model-revision <pinned-provider-revision>
+bash scripts/ragctl.sh answer-eval-full-raw --model-revision <pinned-provider-revision>
+~~~
+
+The two historical result sets belong to different profiles and must never be merged: <code>answer-eval-full</code> selects <code>historical-full-core</code>, while <code>answer-eval-full-raw</code> selects <code>historical-full-raw</code>.
+
+## Evaluation, Reproducibility, and Limitations
+
+| Item | Meaning |
+| --- | --- |
+| <code>current-dev</code> | Reproducible evaluation for the current development corpus; it is not a historical full result. |
+| <code>historical-full-core</code> / <code>historical-full-raw</code> | Separate, non-interchangeable historical profiles. Pin <code>--model-revision</code> and never merge their metrics. |
+| Full benchmark | Requires private seed, historical results, review attestation, Stage 6 corpus, and corpus attestation. A missing dependency must produce <code>BLOCKED</code>. |
+| Hard cases | The current set of 100 cases is a synthetic deterministic contract fixture. It proves execution and integrity contracts, not real financial-question-answering quality. |
+| Four profiles | Contract runs of <code>baseline-rag</code>, <code>agentic-rag</code>, <code>structured-agent</code>, and <code>full-agent</code> do not support rankings or performance-improvement claims. |
+| Semantic calibration | Requires reviewed labels, an authorized scorer identity, and a readiness gate; similarity alone cannot prove <code>ENTAILED</code>. |
+
+ReasoningPlan, claim-level provenance, Decimal calculation provenance, and the strict evidence gate provide process and evidence-integrity guarantees. They are not independent proof of real-corpus semantic quality. When the reviewed Stage 6 corpus and attestation, reviewed hard-case assets, or reviewed semantic labels are absent, the related conclusion must remain <code>BLOCKED</code>.
+
+## CI and local validation
+
+The following commands do not download models, call a provider, or require private PDFs. The <code>make</code> commands require an environment with Make and Bash; on Windows, use Git Bash, WSL, or an equivalent environment, or invoke the corresponding Python scripts directly:
+
+~~~powershell
+.\.venv\Scripts\python.exe scripts\phase0_gate.py baseline
+make p0-smoke
+make hard-case-smoke
+make strict-observability-smoke
+make four-profile-contract
+~~~
+
+GitHub Actions uses Python 3.12, locked dependencies, and CPU-only PyTorch on Ubuntu and Windows. It runs compilation, Ruff, public deterministic tests, evidence-integrity checks, a hard-case subset, the four-profile contract, and Phase 0 smoke. Public CI uses synthetic safe fixtures only: no model downloads, private PDFs, secrets, or evaluation assets. See the [CI workflow](.github/workflows/ci.yml).
+
+## Data, privacy, and security boundary
+
+- <code>pdf/</code>, <code>data/</code>, <code>models/</code>, <code>outputs/</code>, <code>artifacts/</code>, caches, backups, and <code>.env.*</code> are local or private state and must not be committed.
+- A public clean checkout uses only a fictional issuer and synthetic financial record in the [controlled fixture](tests/fixtures/controlled_financial_business_case.json). It is neither report text nor reviewed quality evidence.
+- The system does not implement authentication, multitenancy, billing, real-time market data, or automated trading. Its output must not be used as evidence of real-corpus quality, investment advice, or proof of business performance.
+- Promote OCR or cross-page-table work only after representative data passes the [corpus-quality gate](docs/m10_ocr_table_quality_gate.md).
+
+## Repository layout
+
+~~~text
+.
+├── bootstrap/                 # environment checks
+├── docs/                      # technical, provenance, and postmortem documentation
+├── scripts/                   # dispatchers, gates, and operational helpers
+├── src/
+│   ├── ingest/                # parsing, cleaning, chunking, pipeline
+│   ├── retrieval/             # embedding, FAISS, BM25, hybrid retrieval, reranking
+│   ├── generation/            # answer generation, citations, abstention
+│   ├── agent/                 # graph, claims, tools, calculations, dependencies
+│   ├── structured/            # normalized financial facts
+│   └── evaluation/            # benchmarks, metrics, metadata, archive policy
+├── benchmarks/                # public-safe contract fixtures and schemas
+├── tests/                     # regression and contract tests
+└── run_*.py                   # runnable entrypoints
+~~~
+
+## Further reading
+
+- [Technical overview and setup](docs/project_technical_overview_and_setup.md)
+- [Full benchmark provenance](docs/full_benchmark_provenance.md)
+- [Observability demo](docs/observability_demo.md)
+- [OCR / table-quality gate](docs/m10_ocr_table_quality_gate.md)
+- [Hard-case contracts](benchmarks/hard_cases/README.md)
